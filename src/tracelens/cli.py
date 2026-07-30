@@ -56,9 +56,58 @@ def diagnose(
 ) -> None:
     """Run causal attribution on a stored trace and identify the root cause."""
     _setup_logging(verbose)
-    typer.echo(f"Diagnosing trace {trace_id!r}...")
-    # Phase 6 will implement the full diagnosis pipeline.
-    typer.echo("⚠ Diagnosis engine not yet implemented (Phase 4-6)")
+    from tracelens.attribute import diagnose_trace
+    from tracelens.config import load_config
+    from tracelens.schema import Trace
+    from tracelens.store import connect, load_trace, save_diagnosis
+
+    cfg = load_config(config)
+    conn = connect(cfg.db_path)
+    
+    try:
+        typer.echo(f"Loading trace {trace_id!r} from database '{cfg.db_path}'...")
+        trace_dict = load_trace(conn, trace_id)
+        trace = Trace.model_validate(trace_dict)
+        
+        typer.echo(f"Diagnosing trace {trace_id!r} (this requires LLM calls)...")
+        diagnosis = diagnose_trace(trace, cfg)
+        
+        save_diagnosis(conn, diagnosis)
+        
+        typer.echo(f"\n{'=' * 60}")
+        typer.echo("DIAGNOSIS COMPLETE")
+        typer.echo(f"{'=' * 60}")
+        typer.echo(f"\nSummary:\n  {diagnosis.summary}\n")
+        
+        if diagnosis.root_cause_step:
+            typer.echo("Step Breakdown:")
+            for attr in diagnosis.all_steps:
+                mark = "👉" if attr.step_id == diagnosis.root_cause_step.step_id else "  "
+                typer.echo(
+                    f"{mark} {attr.agent_name:<15} | Score: {attr.attribution_score:<5.2f} "
+                    f"| Novel Claims: {len(attr.novel_claims)} "
+                    f"| Impact: {attr.downstream_impact:.2f}"
+                )
+                
+                # Print the actual hallucinated claims for the root cause
+                if attr.step_id == diagnosis.root_cause_step.step_id and attr.novel_claims:
+                    typer.echo("\n    Hallucinated Claims Identified:")
+                    for c in attr.novel_claims:
+                        typer.echo(f"      - {c.text}")
+                        typer.echo(f"        (Confidence: {c.confidence:.2f})")
+        
+        typer.echo(
+            f"\nDiagnosis saved. Run 'tracelens report --trace-id {trace_id}' to view later."
+        )
+        
+    except ValueError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1) from None
+    except Exception as e:
+        typer.echo(f"Unexpected error: {e}", err=True)
+        raise typer.Exit(1) from None
+    finally:
+        conn.close()
 
 
 @app.command()
@@ -87,7 +136,9 @@ def report(
             typer.echo(
                 f"Root Cause: {diag['root_cause_agent']} (step {diag['root_cause_step_id']})"
             )
-            typer.echo(f"Attribution Score: {diag['attribution_score']:.2f}")
+            score = diag['attribution_score']
+            score_str = f"{score:.2f}" if score is not None else "N/A"
+            typer.echo(f"Attribution Score: {score_str}")
             typer.echo(f"Summary: {diag['summary']}")
             typer.echo(f"{'=' * 60}\n")
         else:

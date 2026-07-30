@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 class StepIO(BaseModel):
     """The input received and output produced by one execution step."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     input_text: str = ""
     output_text: str = ""
@@ -46,7 +46,7 @@ class TraceStep(BaseModel):
         metadata: Arbitrary key-value pairs (token counts, model params, etc.).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     step_id: str
     agent_name: str
@@ -84,7 +84,7 @@ class Trace(BaseModel):
         tags: Free-form labels for filtering (e.g., ["production", "regression"]).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     trace_id: str
     project_name: str = "default"
