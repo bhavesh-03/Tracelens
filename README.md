@@ -98,7 +98,7 @@ tracelens/
 | 3 | Trace store (SQLite) & DAG builder | ✅ Done |
 | 4 | Claim decomposition engine | ✅ Done |
 | 5 | Step-level entailment verification | ✅ Done |
-| 6 | Causal attribution scoring | ⬜ Planned |
+| 6 | Causal attribution scoring | ✅ Done |
 | 7 | CLI diagnostic commands | ⬜ Planned |
 | 8 | Defect injection study | ⬜ Planned |
 | 9 | Interactive DAG dashboard & release polish | ⬜ Planned |
