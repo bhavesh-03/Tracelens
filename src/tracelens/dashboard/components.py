@@ -38,7 +38,6 @@ def render_dag(trace: Trace, diagnosis: Diagnosis | None):
         st.error(f"Failed to build DAG: {e}")
         return
 
-    # Extract attribution data for quick lookup
     attr_map: dict[str, StepAttribution] = {}
     if diagnosis:
         for attr in diagnosis.all_steps:
@@ -46,59 +45,27 @@ def render_dag(trace: Trace, diagnosis: Diagnosis | None):
             
     root_cause_id = diagnosis.root_cause_step.step_id if diagnosis and diagnosis.root_cause_step else None
 
-    # Create Graphviz graph
-    dot = graphviz.Digraph(engine="dot")
-    dot.attr(rankdir="TB", size="10,10")
-    
-    # Define nodes
-    for step in trace.steps:
+    # Render steps in chronological order using native Streamlit elements
+    for i, step in enumerate(trace.steps):
         node_id = step.step_id
-        label_lines = [
-            f"<<B>{step.agent_name}</B>",
-            f"<I>({step.step_type})</I>"
-        ]
         
-        # Color styling
-        fillcolor = "white"
-        fontcolor = "black"
-        shape = "box"
-        style = "filled,rounded"
-        
-        if step.step_type == "tool":
-            shape = "ellipse"
-            fillcolor = "#f0f2f6"
-            
+        # Determine the color/status based on attribution score
         if node_id == root_cause_id:
-            fillcolor = "#ff4b4b" # Streamlit Red
-            fontcolor = "white"
-            label_lines.append(f"<BR/><B>Score: {attr_map[node_id].attribution_score:.2f}</B>")
+            score = attr_map[node_id].attribution_score
+            st.error(f"🚨 **{step.agent_name}** ({step.step_type}) — **Root Cause (Score: {score:.2f})**")
         elif node_id in attr_map and attr_map[node_id].attribution_score > 0.05:
-            # Minor score / innocent but involved
-            fillcolor = "#ffa421" # Streamlit Orange
-            fontcolor = "white"
+            score = attr_map[node_id].attribution_score
+            st.warning(f"⚠️ **{step.agent_name}** ({step.step_type}) — Suspicious (Score: {score:.2f})")
         elif diagnosis:
-            # Evaluated and cleared
-            fillcolor = "#00c04b" # Streamlit Green
-            fontcolor = "white"
+            st.success(f"✅ **{step.agent_name}** ({step.step_type}) — Innocent")
+        elif step.step_type == "tool":
+            st.info(f"🔧 **{step.agent_name}** (tool)")
+        else:
+            st.info(f"🤖 **{step.agent_name}** ({step.step_type})")
             
-        label = "<" + "<BR/>".join(label_lines) + ">"
-        
-        dot.node(
-            node_id,
-            label=label,
-            shape=shape,
-            style=style,
-            fillcolor=fillcolor,
-            fontcolor=fontcolor,
-            penwidth="2" if node_id == root_cause_id else "1"
-        )
-        
-    # Define edges (Parent -> Child flow)
-    for step in trace.steps:
-        if step.parent_step_id:
-            dot.edge(step.parent_step_id, step.step_id, color="#888888")
-            
-    st.graphviz_chart(dot, use_container_width=True)
+        # Draw arrow pointing down
+        if i < len(trace.steps) - 1:
+            st.markdown("<div style='text-align: center; color: #888; font-size: 24px; line-height: 0.5;'>↓</div><br/>", unsafe_allow_html=True)
 
 def render_diagnosis_panel(diagnosis: Diagnosis):
     """Renders the mathematical diagnosis panel."""

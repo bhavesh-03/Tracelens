@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS diagnoses (
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
     """Open (creating if needed) the TraceLens DB and ensure the schema exists."""
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(_DDL)
     return conn

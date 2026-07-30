@@ -21,6 +21,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "graphviz>=0.20",
     "rich>=13.0.0",
+    "streamlit-agraph>=0.0.45",
 ]
 
 [project.scripts]

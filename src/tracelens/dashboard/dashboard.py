@@ -92,11 +92,43 @@ if selected_label:
         trace = Trace.model_validate(trace_dict)
         diagnosis_dict = load_diagnosis(conn, trace_id)
         
-        from tracelens.schema import Diagnosis
-        diagnosis = Diagnosis(**diagnosis_dict) if diagnosis_dict else None
+        from tracelens.schema import Diagnosis, StepAttribution, Claim
+        import json
+        
+        diagnosis = None
+        if diagnosis_dict:
+            all_steps = []
+            if diagnosis_dict.get("step_scores_json"):
+                steps_data = json.loads(diagnosis_dict["step_scores_json"])
+                for s in steps_data:
+                    claims = [Claim(**c) for c in s.get("novel_claims", [])]
+                    attr = StepAttribution(
+                        step_id=s["step_id"],
+                        agent_name=s["agent_name"],
+                        step_type=s.get("step_type", "agent"),
+                        attribution_score=s["attribution_score"],
+                        novel_claim_ratio=s["novel_claim_ratio"],
+                        downstream_impact=s["downstream_impact"],
+                        novel_claims=claims
+                    )
+                    all_steps.append(attr)
+                    
+            root_cause = None
+            root_id = diagnosis_dict.get("root_cause_step_id")
+            if root_id:
+                root_cause = next((s for s in all_steps if s.step_id == root_id), None)
+                
+            diagnosis = Diagnosis(
+                trace_id=trace_id,
+                root_cause_step=root_cause,
+                all_steps=all_steps,
+                summary=diagnosis_dict.get("summary", "")
+            )
         
     except Exception as e:
+        import traceback
         st.error(f"Error loading trace: {e}")
+        st.code(traceback.format_exc(), language="python")
         st.stop()
 
     st.title("Trace Explorer")
