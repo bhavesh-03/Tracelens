@@ -101,4 +101,4 @@ tracelens/
 | 6 | Causal attribution scoring | ✅ Done |
 | 7 | CLI diagnostic commands | ✅ Done |
 | 8 | Defect injection study | ✅ Done |
-| 9 | Interactive DAG dashboard & release polish | ⬜ Planned |
+| 9 | Interactive DAG dashboard & release polish | ✅ Done |

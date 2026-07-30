@@ -184,7 +184,7 @@ def dashboard(
     import subprocess
     import sys
 
-    dashboard_path = Path(__file__).resolve().parent.parent.parent / "dashboard" / "app.py"
+    dashboard_path = Path(__file__).resolve().parent / "dashboard" / "dashboard.py"
     if not dashboard_path.exists():
         typer.echo(f"Dashboard not found at {dashboard_path}", err=True)
         raise typer.Exit(1) from None
