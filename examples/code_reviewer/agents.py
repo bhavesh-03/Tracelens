@@ -1,7 +1,8 @@
 """Multi-Agent Code Reviewer (Subject Application for TraceLens)."""
 
+
 import litellm
-from typing import Any
+
 from tracelens.capture import TraceLensCapture
 
 from .tools import run_ast_linter, run_security_scanner

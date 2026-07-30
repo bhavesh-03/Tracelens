@@ -1,9 +1,11 @@
 """CLI entrypoint for the Subject Application."""
 
 import argparse
+
 from tracelens.capture import TraceLensCapture
-from tracelens.store import connect, save_trace
 from tracelens.config import load_config
+from tracelens.store import connect, save_trace
+
 from .agents import CoordinatorAgent
 
 SAMPLE_CODE = """
@@ -56,12 +58,12 @@ def main():
     # Save to SQLite store
     config = load_config()
     conn = connect(config.db_path)
-    trace_id = save_trace(conn, trace)
+    save_trace(conn, trace)
     
     print(f"\n✅ Trace successfully saved to database '{config.db_path}'!")
     print(f"Trace ID: {trace.trace_id}")
     print("\nYou can now view this trace using:")
-    print(f"  uv run tracelens report")
+    print("  uv run tracelens report")
     print(f"  uv run tracelens diagnose {trace.trace_id}")
 
 if __name__ == "__main__":

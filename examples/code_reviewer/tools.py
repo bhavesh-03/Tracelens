@@ -3,6 +3,7 @@
 import ast
 import re
 
+
 def run_ast_linter(code: str) -> str:
     """Parses Python code into an AST to check for basic syntax errors."""
     try:
