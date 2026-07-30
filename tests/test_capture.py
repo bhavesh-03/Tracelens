@@ -155,6 +155,49 @@ class TestManualAddStep:
         assert sid == "step_000"
 
 
+class TestContextManager:
+    """Tests for the step() context manager."""
+
+    def test_basic_context_manager(self) -> None:
+        tracer = TraceLensCapture(trace_id="cm_test", project_name="my_project")
+
+        with tracer.step(agent_name="cm_agent", input_text="hello") as io:
+            io.output_text = "world"
+            io.tool_name = "hello_tool"
+
+        trace = tracer.finalize(query="hello", final_answer="world")
+        assert trace.project_name == "my_project"
+        assert len(trace.steps) == 1
+        
+        step = trace.steps[0]
+        assert step.agent_name == "cm_agent"
+        assert step.io.input_text == "hello"
+        assert step.io.output_text == "world"
+        assert step.io.tool_name == "hello_tool"
+        assert step.parent_step_id is None
+
+    def test_nested_context_managers(self) -> None:
+        tracer = TraceLensCapture(trace_id="cm_nested")
+
+        with tracer.step(agent_name="root", input_text="q") as io_root:
+            with tracer.step(agent_name="child", input_text="sub_q") as io_child:
+                io_child.output_text = "sub_a"
+            io_root.output_text = "a"
+
+        trace = tracer.finalize(query="q", final_answer="a")
+        
+        assert len(trace.steps) == 2
+        
+        # Child completes first because its with-block exits before root's
+        child_step = trace.steps[0]
+        root_step = trace.steps[1]
+        
+        assert child_step.agent_name == "child"
+        assert root_step.agent_name == "root"
+        
+        assert root_step.parent_step_id is None
+        assert child_step.parent_step_id == root_step.step_id
+
 class TestAsyncCapture:
     """Tests for async function tracing."""
 
@@ -168,4 +211,6 @@ class TestAsyncCapture:
 
         result = await async_fn("test")
         assert result == "async result"
-        assert tracer.step_count == 1
+        
+        trace = tracer.finalize("test", "async result")
+        assert len(trace.steps) == 1

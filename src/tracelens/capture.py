@@ -69,11 +69,66 @@ class TraceLensCapture:
     Call `finalize()` at the end to get a validated `Trace` object.
     """
 
-    def __init__(self, trace_id: str | None = None) -> None:
+    def __init__(self, trace_id: str | None = None, project_name: str = "default") -> None:
         self.trace_id = trace_id or f"trace_{uuid.uuid4().hex[:12]}"
+        self.project_name = project_name
         self._steps: list[_RawStep] = []
         self._step_counter = 0
         self._finalized = False
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def step(
+        self,
+        agent_name: str,
+        step_type: Literal[
+            "router", "agent", "tool", "synthesizer", "llm_call", "custom"
+        ] = "agent",
+        input_text: str = "",
+        model: str | None = None,
+        tool_name: str | None = None,
+        tool_args: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ):
+        """Context manager to capture a block of code as a trace step.
+
+        Yields a StepIO object that you can mutate (e.g. setting output_text).
+        """
+        step_id = f"step_{self._step_counter:03d}"
+        self._step_counter += 1
+        parent_id = _current_parent.get()
+
+        token = _current_parent.set(step_id)
+        start_ms = time.time() * 1000
+        
+        io = StepIO(
+            input_text=input_text,
+            model=model,
+            tool_name=tool_name,
+            tool_args=tool_args or {},
+        )
+        
+        try:
+            yield io
+        finally:
+            duration_ms = time.time() * 1000 - start_ms
+            self._steps.append(_RawStep(
+                step_id=step_id,
+                agent_name=agent_name,
+                step_type=step_type,
+                parent_step_id=parent_id,
+                input_text=io.input_text,
+                output_text=io.output_text,
+                model=io.model,
+                tool_name=io.tool_name,
+                tool_args=io.tool_args,
+                tool_output=io.tool_output,
+                timestamp_ms=start_ms,
+                duration_ms=duration_ms,
+                metadata=metadata or {},
+            ))
+            _current_parent.reset(token)
 
     def trace_step(
         self,
@@ -98,71 +153,35 @@ class TraceLensCapture:
                 @functools.wraps(fn)
                 async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                     input_text = str(args[0]) if args else str(kwargs.get("query", ""))
-                    step_id = f"step_{self._step_counter:03d}"
-                    self._step_counter += 1
-                    parent_id = _current_parent.get()
-
-                    token = _current_parent.set(step_id)
-                    start_ms = time.time() * 1000
-                    try:
+                    with self.step(
+                        agent_name=agent_name,
+                        step_type=step_type,
+                        input_text=input_text,
+                        model=model,
+                        tool_name=tool_name,
+                        tool_args=dict(kwargs) if kwargs else {},
+                        metadata=metadata,
+                    ) as io:
                         result = await fn(*args, **kwargs)
-                        output_text = str(result) if result is not None else ""
-                        duration_ms = time.time() * 1000 - start_ms
-
-                        self._steps.append(_RawStep(
-                            step_id=step_id,
-                            agent_name=agent_name,
-                            step_type=step_type,
-                            parent_step_id=parent_id,
-                            input_text=input_text,
-                            output_text=output_text,
-                            model=model,
-                            tool_name=tool_name,
-                            tool_args=dict(kwargs) if kwargs else {},
-                            tool_output=None,
-                            timestamp_ms=start_ms,
-                            duration_ms=duration_ms,
-                            metadata=metadata or {},
-                        ))
+                        io.output_text = str(result) if result is not None else ""
                         return result
-                    finally:
-                        _current_parent.reset(token)
-
                 return async_wrapper
             else:
                 @functools.wraps(fn)
                 def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                     input_text = str(args[0]) if args else str(kwargs.get("query", ""))
-                    step_id = f"step_{self._step_counter:03d}"
-                    self._step_counter += 1
-                    parent_id = _current_parent.get()
-
-                    token = _current_parent.set(step_id)
-                    start_ms = time.time() * 1000
-                    try:
+                    with self.step(
+                        agent_name=agent_name,
+                        step_type=step_type,
+                        input_text=input_text,
+                        model=model,
+                        tool_name=tool_name,
+                        tool_args=dict(kwargs) if kwargs else {},
+                        metadata=metadata,
+                    ) as io:
                         result = fn(*args, **kwargs)
-                        output_text = str(result) if result is not None else ""
-                        duration_ms = time.time() * 1000 - start_ms
-
-                        self._steps.append(_RawStep(
-                            step_id=step_id,
-                            agent_name=agent_name,
-                            step_type=step_type,
-                            parent_step_id=parent_id,
-                            input_text=input_text,
-                            output_text=output_text,
-                            model=model,
-                            tool_name=tool_name,
-                            tool_args=dict(kwargs) if kwargs else {},
-                            tool_output=None,
-                            timestamp_ms=start_ms,
-                            duration_ms=duration_ms,
-                            metadata=metadata or {},
-                        ))
+                        io.output_text = str(result) if result is not None else ""
                         return result
-                    finally:
-                        _current_parent.reset(token)
-
                 return sync_wrapper
         return decorator
 
@@ -246,6 +265,7 @@ class TraceLensCapture:
 
         return Trace(
             trace_id=self.trace_id,
+            project_name=self.project_name,
             query=query,
             final_answer=final_answer,
             steps=trace_steps,

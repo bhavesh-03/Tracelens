@@ -17,6 +17,7 @@ _DDL = """
 CREATE TABLE IF NOT EXISTS traces (
     id INTEGER PRIMARY KEY,
     trace_id TEXT UNIQUE NOT NULL,
+    project_name TEXT NOT NULL DEFAULT 'default',
     query TEXT NOT NULL,
     final_answer TEXT NOT NULL,
     expected_answer TEXT,
@@ -71,10 +72,11 @@ def save_trace(conn: sqlite3.Connection, trace: Trace) -> int:
 
     with conn:
         cursor = conn.execute(
-            "INSERT INTO traces (trace_id, query, final_answer, expected_answer, "
-            "created_at, tags_json, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO traces (trace_id, project_name, query, final_answer, expected_answer, "
+            "created_at, tags_json, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 trace.trace_id,
+                trace.project_name,
                 trace.query,
                 trace.final_answer,
                 trace.expected_answer,

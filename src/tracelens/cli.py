@@ -96,14 +96,28 @@ def report(
                 typer.echo("No traces stored yet. Use 'tracelens ingest' to add traces.")
                 raise typer.Exit(0) from None
 
-            typer.echo(f"\n{'Trace ID':<30} {'Root Cause':<20} {'Score':<10} {'Date'}")
-            typer.echo("-" * 80)
+            typer.echo(
+                f"\n{'Trace ID':<25} {'Project':<15} {'Root Cause':<20} {'Score':<8} {'Date'}"
+            )
+            typer.echo("-" * 90)
             for t in traces:
                 root_agent = t.get("root_cause_agent") or "—"
                 score = t.get("attribution_score")
                 score_str = f"{score:.2f}" if score is not None else "—"
+                project_name = t.get("project_name", "default")
+                
+                trace_id_disp = (
+                    (t['trace_id'][:22] + "...") if len(t['trace_id']) > 25 else t['trace_id']
+                )
+                proj_disp = (
+                    (project_name[:12] + "...") if len(project_name) > 15 else project_name
+                )
+                root_disp = (
+                    (root_agent[:17] + "...") if len(root_agent) > 20 else root_agent
+                )
+                
                 typer.echo(
-                    f"{t['trace_id']:<30} {root_agent:<20} {score_str:<10} "
+                    f"{trace_id_disp:<25} {proj_disp:<15} {root_disp:<20} {score_str:<8} "
                     f"{t['created_at'][:19]}"
                 )
             typer.echo()

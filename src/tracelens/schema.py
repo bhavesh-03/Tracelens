@@ -8,6 +8,7 @@ EvalGate uses between EvalCase (Pydantic) and TrialResult (dataclass).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -86,6 +87,7 @@ class Trace(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     trace_id: str
+    project_name: str = "default"
     query: str
     final_answer: str
     steps: list[TraceStep]
@@ -151,6 +153,23 @@ class Trace(BaseModel):
         """Steps that are not the parent of any other step."""
         parent_ids = {s.parent_step_id for s in self.steps}
         return [s for s in self.steps if s.step_id not in parent_ids]
+
+    def to_json_file(self, path: str | Path) -> Path:
+        """Serialize trace to a formatted JSON file."""
+        from pathlib import Path as _Path
+        p = _Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        return p
+
+    @classmethod
+    def from_json_file(cls, path: str | Path) -> Trace:
+        """Load and validate a Trace from a JSON file."""
+        from pathlib import Path as _Path
+        p = _Path(path)
+        if not p.exists():
+            raise ValueError(f"Trace file {path} not found")
+        return cls.model_validate_json(p.read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
