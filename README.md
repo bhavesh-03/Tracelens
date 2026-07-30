@@ -93,9 +93,9 @@ tracelens/
 | Phase | Description | Status |
 |---|---|---|
 | 0 | Scaffold — pyproject, config, CLI stub | ✅ Done |
-| 1 | Trace schema & capture SDK | 🔧 In progress |
-| 2 | Subject agent (multi-agent code reviewer) | ⬜ Planned |
-| 3 | Trace store (SQLite) & DAG builder | ⬜ Planned |
+| 1 | Trace schema & capture SDK | ✅ Done |
+| 2 | Subject agent (multi-agent code reviewer) | ✅ Done |
+| 3 | Trace store (SQLite) & DAG builder | ✅ Done |
 | 4 | Claim decomposition engine | ⬜ Planned |
 | 5 | Step-level entailment verification | ⬜ Planned |
 | 6 | Causal attribution scoring | ⬜ Planned |
