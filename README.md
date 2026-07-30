@@ -96,7 +96,7 @@ tracelens/
 | 1 | Trace schema & capture SDK | ✅ Done |
 | 2 | Subject agent (multi-agent code reviewer) | ✅ Done |
 | 3 | Trace store (SQLite) & DAG builder | ✅ Done |
-| 4 | Claim decomposition engine | ⬜ Planned |
+| 4 | Claim decomposition engine | ✅ Done |
 | 5 | Step-level entailment verification | ⬜ Planned |
 | 6 | Causal attribution scoring | ⬜ Planned |
 | 7 | CLI diagnostic commands | ⬜ Planned |
