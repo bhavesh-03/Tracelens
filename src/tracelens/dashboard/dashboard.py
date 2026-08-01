@@ -1,155 +1,276 @@
-"""Main entrypoint for the TraceLens Streamlit Dashboard."""
+"""TraceLens Dashboard — Live Multi-Agent Execution Monitor.
 
+Auto-refreshes every 5 seconds. When you run a chatbot or multi-agent pipeline
+that is instrumented with TraceLens, new traces will automatically appear here
+without any manual refresh.
+"""
+
+from __future__ import annotations
+
+import json
 import sys
 from pathlib import Path
 
 import streamlit as st
 
-# Ensure TraceLens is on the Python path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+# Ensure the tracelens package is importable when running directly via streamlit
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from tracelens.config import load_config
 from tracelens.dashboard.components import (
     render_dag,
     render_diagnosis_panel,
     render_step_details,
+    render_timeline,
     render_trace_summary,
 )
 from tracelens.schema import Trace
 from tracelens.store import connect, list_traces, load_diagnosis, load_trace
 
+# ---------------------------------------------------------------------------
+# Page config
+# ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="TraceLens | Multi-Agent Diagnostics",
     page_icon="🔬",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Optional: Add custom CSS for a more premium look
+# ---------------------------------------------------------------------------
+# Auto-refresh — the key to "live" updates without manual page reload
+# ---------------------------------------------------------------------------
+try:
+    from streamlit_autorefresh import st_autorefresh
+    st_autorefresh(interval=5000, key="live_refresh")  # refresh every 5 seconds
+except ImportError:
+    pass  # graceful degradation if not installed
+
+# ---------------------------------------------------------------------------
+# Custom CSS
+# ---------------------------------------------------------------------------
 st.markdown("""
 <style>
-    .reportview-container {
-        background: #f8f9fa;
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif !important;
     }
-    .sidebar .sidebar-content {
-        background: #ffffff;
+    
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background: #111827;
     }
-    h1, h2, h3 {
-        color: #1e1e1e;
-        font-family: 'Inter', sans-serif;
+    [data-testid="stSidebar"] * {
+        color: #e5e7eb !important;
     }
+    
+    /* Main content */
+    .main .block-container {
+        padding-top: 1.5rem;
+        max-width: 1400px;
+    }
+    
+    /* Metric cards */
+    [data-testid="stMetric"] {
+        background: #1f2937;
+        border: 1px solid #374151;
+        border-radius: 8px;
+        padding: 1rem;
+    }
+    
+    /* Live indicator */
+    .live-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #22c55e;
+        animation: pulse 1.5s infinite;
+        margin-right: 6px;
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+    }
+    
+    h1, h2, h3 { color: #f9fafb !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# Load configuration and DB connection
+# ---------------------------------------------------------------------------
+# DB connection — cached at the resource level (connection reuse, not data reuse)
+# ---------------------------------------------------------------------------
 @st.cache_resource
-def get_db_connection():
-    # In a real app, config path might be passed via env vars
+def _get_connection():
     cfg = load_config()
     return cfg, connect(cfg.db_path)
 
-cfg, conn = get_db_connection()
+cfg, conn = _get_connection()
 
-# --- SIDEBAR ---
-st.sidebar.title("🔬 TraceLens")
-st.sidebar.markdown("Automated Causal Diagnostics")
+# ---------------------------------------------------------------------------
+# SIDEBAR — Project filter + live trace list
+# ---------------------------------------------------------------------------
+st.sidebar.markdown("""
+<div style="padding: 0.5rem 0 1rem 0;">
+    <h2 style="margin: 0; font-size: 1.4rem; color: white;">🔬 TraceLens</h2>
+    <p style="margin: 0; font-size: 0.8rem; color: #9ca3af;">Multi-Agent Causal Diagnostics</p>
+</div>
+""", unsafe_allow_html=True)
 
-st.sidebar.header("Filter Traces")
-all_traces = list_traces(conn)
+# Always fetch fresh — this runs on every 5-second auto-refresh cycle
+all_traces = list_traces(conn, limit=100)
+
+# Live indicator
+n_undiagnosed = sum(1 for t in all_traces if t.get("attribution_score") is None)
+st.sidebar.markdown(
+    f'<span class="live-dot"></span> **Live** — {len(all_traces)} traces total'
+    + (f", {n_undiagnosed} pending diagnosis" if n_undiagnosed else ""),
+    unsafe_allow_html=True,
+)
+st.sidebar.divider()
 
 if not all_traces:
-    st.warning("No traces found in the database. Run `tracelens ingest` or a subject app.")
+    st.warning(
+        "⚠️ No traces found. Instrument your app with `TraceLensCapture` "
+        "and run it to see traces appear here automatically."
+    )
+    st.code("""
+from tracelens.capture import TraceLensCapture
+from tracelens.store import connect, save_trace
+
+tracer = TraceLensCapture(project_name="my_project")
+
+with tracer.step("RouterAgent", step_type="router", input_text=query) as io:
+    io.output_text = route(query)
+
+trace = tracer.finalize(query=query, final_answer=final_answer)
+save_trace(connect("tracelens.db"), trace)
+    """, language="python")
     st.stop()
 
-# Extract unique projects and tags
-projects = sorted(list(set([t.get("project_name", "default") for t in all_traces])))
-selected_project = st.sidebar.selectbox("Project", ["All"] + projects)
+# Project filter
+projects = sorted({t.get("project_name", "default") for t in all_traces})
+selected_project = st.sidebar.selectbox("📂 Project", ["All Projects"] + projects)
 
-# Filter by project
-filtered_traces = all_traces
-if selected_project != "All":
-    filtered_traces = [t for t in filtered_traces if t.get("project_name") == selected_project]
-    
-# Trace Selection
-st.sidebar.header("Recent Traces")
-trace_options = {}
-for t in filtered_traces:
-    # Format: trace_123... (project) - Score: X
+filtered = all_traces
+if selected_project != "All Projects":
+    filtered = [t for t in filtered if t.get("project_name") == selected_project]
+
+# Trace list
+st.sidebar.markdown("**Recent Traces**")
+trace_options: dict[str, str] = {}
+for t in filtered[:30]:  # show last 30
     score = t.get("attribution_score")
-    score_str = f"| Score: {score:.2f}" if score is not None else ""
-    label = f"{t['trace_id'][:12]}... {score_str}"
-    trace_options[label] = t['trace_id']
+    root = t.get("root_cause_agent")
+    tid = t["trace_id"]
 
-selected_label = st.sidebar.radio("Select a Trace:", list(trace_options.keys()))
+    if score is None:
+        status_icon = "⏳"
+        detail = "not diagnosed"
+    elif root:
+        status_icon = "🔴"
+        detail = f"{root} ({score:.2f})"
+    else:
+        status_icon = "🟢"
+        detail = f"healthy ({score:.2f})"
 
-# --- MAIN AREA ---
-if selected_label:
-    trace_id = trace_options[selected_label]
-    
-    # Load data
-    try:
-        trace_dict = load_trace(conn, trace_id)
-        trace = Trace.model_validate(trace_dict)
-        diagnosis_dict = load_diagnosis(conn, trace_id)
-        
-        from tracelens.schema import Diagnosis, StepAttribution, Claim
-        import json
-        
-        diagnosis = None
-        if diagnosis_dict:
-            all_steps = []
-            if diagnosis_dict.get("step_scores_json"):
-                steps_data = json.loads(diagnosis_dict["step_scores_json"])
-                for s in steps_data:
-                    claims = [Claim(**c) for c in s.get("novel_claims", [])]
-                    attr = StepAttribution(
-                        step_id=s["step_id"],
-                        agent_name=s["agent_name"],
-                        step_type=s.get("step_type", "agent"),
-                        attribution_score=s["attribution_score"],
-                        novel_claim_ratio=s["novel_claim_ratio"],
-                        downstream_impact=s["downstream_impact"],
-                        novel_claims=claims
-                    )
-                    all_steps.append(attr)
-                    
-            root_cause = None
-            root_id = diagnosis_dict.get("root_cause_step_id")
-            if root_id:
-                root_cause = next((s for s in all_steps if s.step_id == root_id), None)
-                
-            diagnosis = Diagnosis(
-                trace_id=trace_id,
-                root_cause_step=root_cause,
-                all_steps=all_steps,
-                summary=diagnosis_dict.get("summary", "")
-            )
-        
-    except Exception as e:
-        import traceback
-        st.error(f"Error loading trace: {e}")
-        st.code(traceback.format_exc(), language="python")
-        st.stop()
+    short_id = tid[:14] + "..."
+    label = f"{status_icon} {short_id}\n   {detail}"
+    trace_options[label] = tid
 
-    st.title("Trace Explorer")
-    st.caption(f"ID: `{trace.trace_id}` | Date: `{trace_dict.get('created_at', 'Unknown')}`")
-    
-    # Top Summary Banner
-    render_trace_summary(trace, diagnosis)
+selected_label = st.sidebar.radio(
+    "Select trace:", list(trace_options.keys()), label_visibility="collapsed"
+)
+
+# ---------------------------------------------------------------------------
+# MAIN CONTENT
+# ---------------------------------------------------------------------------
+if not selected_label:
+    st.info("Select a trace from the sidebar.")
+    st.stop()
+
+trace_id = trace_options[selected_label]
+
+try:
+    trace_dict = load_trace(conn, trace_id)
+    trace = Trace.model_validate(trace_dict)
+    diagnosis_dict = load_diagnosis(conn, trace_id)
+
+    # Reconstruct Diagnosis object from raw DB row
+    from tracelens.schema import Claim, Diagnosis, StepAttribution
+
+    diagnosis = None
+    if diagnosis_dict:
+        all_steps = []
+        if diagnosis_dict.get("step_scores_json"):
+            for s in json.loads(diagnosis_dict["step_scores_json"]):
+                claims = [Claim(**c) for c in s.get("novel_claims", [])]
+                all_steps.append(StepAttribution(
+                    step_id=s["step_id"],
+                    agent_name=s["agent_name"],
+                    step_type=s.get("step_type", "agent"),
+                    attribution_score=s["attribution_score"],
+                    novel_claim_ratio=s["novel_claim_ratio"],
+                    downstream_impact=s["downstream_impact"],
+                    novel_claims=claims,
+                    total_claims=s.get("total_claims", len(claims)),
+                ))
+
+        root_cause = None
+        root_id = diagnosis_dict.get("root_cause_step_id")
+        if root_id:
+            root_cause = next((s for s in all_steps if s.step_id == root_id), None)
+
+        diagnosis = Diagnosis(
+            trace_id=trace_id,
+            root_cause_step=root_cause,
+            all_steps=all_steps,
+            summary=diagnosis_dict.get("summary", ""),
+        )
+
+except Exception as e:
+    import traceback
+    st.error(f"Error loading trace `{trace_id}`: {e}")
+    st.code(traceback.format_exc(), language="python")
+    st.stop()
+
+# ---------------------------------------------------------------------------
+# Header
+# ---------------------------------------------------------------------------
+st.markdown(
+    f"## Trace Explorer  "
+    f"<span style='font-size:0.75rem; color:#9ca3af; font-weight:400;'>"
+    f"`{trace.trace_id}` · {trace.project_name} · {trace_dict.get('created_at', '')[:19]}"
+    f"</span>",
+    unsafe_allow_html=True,
+)
+
+if not diagnosis:
+    st.warning(
+        "⚠️ This trace has not been diagnosed yet. "
+        "Run `tracelens diagnose <trace_id>` to compute attribution scores."
+    )
+
+# Summary metrics banner
+render_trace_summary(trace, diagnosis)
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Two-column layout: Left = Analysis | Right = Graph
+# ---------------------------------------------------------------------------
+col_left, col_right = st.columns([1.1, 0.9], gap="large")
+
+with col_left:
+    if diagnosis:
+        render_diagnosis_panel(diagnosis)
+    else:
+        st.info("Run diagnosis to see the causal attribution analysis here.")
+
     st.divider()
-    
-    # Main Dashboard Body
-    col1, col2 = st.columns([1.2, 1.0])
-    
-    with col1:
-        if diagnosis:
-            render_diagnosis_panel(diagnosis)
-        else:
-            st.warning("⚠️ This trace has not been diagnosed yet. Run `tracelens diagnose <trace_id>` via CLI to compute causal attribution scores.")
-            st.info("The DAG below will render in default colors because attribution scores are missing.")
-            
-        st.divider()
-        render_step_details(trace)
-        
-    with col2:
-        render_dag(trace, diagnosis)
+    render_timeline(trace)
+    st.divider()
+    render_step_details(trace)
+
+with col_right:
+    render_dag(trace, diagnosis)

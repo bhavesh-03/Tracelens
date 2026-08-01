@@ -198,6 +198,8 @@ class Claim:
     verdict: Literal["grounded", "ungrounded", "uncertain"] | None = None
     evidence: str | None = None
     confidence: float = 0.0
+    agreement_score: float = 0.0
+    vote_breakdown: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -208,6 +210,8 @@ class Claim:
             "verdict": self.verdict,
             "evidence": self.evidence,
             "confidence": self.confidence,
+            "agreement_score": self.agreement_score,
+            "vote_breakdown": self.vote_breakdown,
         }
 
 

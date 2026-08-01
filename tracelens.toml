@@ -4,11 +4,21 @@
 [tracelens]
 judge_model = "gemini/gemini-2.5-flash"     # litellm model string for claim verification
 max_claims_per_step = 20                     # cap on claim decomposition per step
-attribution_threshold = 0.7                  # flag step as root cause if score > this
+attribution_threshold = 0.15                 # flag step as root cause if score > this
+                                             # (lowered from 0.7 — new formula produces smaller scores)
 db_path = "tracelens.db"                     # SQLite database path
-temperature = 0.1                            # low temperature for deterministic judging
+temperature = 0.3                            # slightly higher temp improves ensemble diversity
 max_concurrent_verifications = 1             # keep 1 on Gemini free tier (15 req/min)
 verification_timeout_s = 60                  # per-verification timeout in seconds
+
+# Ensemble NLI settings — controls non-determinism correction
+nli_ensemble_votes = 3          # number of independent NLI judge calls per claim
+                                # 1 = single-shot (fast, non-deterministic)
+                                # 3 = recommended (good balance of cost vs accuracy)
+                                # 5 = high-confidence (slower, more expensive)
+nli_min_agreement = 0.67        # minimum fraction of judges that must agree
+                                # e.g. 0.67 = need 2/3 votes to match
+                                # if agreement < this, verdict is "uncertain"
 
 [costs]
 # Approximate USD per token — used for cost estimates printed at diagnosis end.

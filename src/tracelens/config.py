@@ -34,6 +34,8 @@ class TraceLensConfig:
     temperature: float = 0.1
     max_concurrent_verifications: int = 1
     verification_timeout_s: int = 60
+    nli_ensemble_votes: int = 3
+    nli_min_agreement: float = 0.67
     costs: CostConfig = field(default_factory=CostConfig)
 
     def validate(self) -> None:
@@ -50,6 +52,14 @@ class TraceLensConfig:
             raise ValueError(
                 "max_concurrent_verifications must be >= 1, "
                 f"got {self.max_concurrent_verifications}"
+            )
+        if not 1 <= self.nli_ensemble_votes <= 10:
+            raise ValueError(
+                f"nli_ensemble_votes must be in [1, 10], got {self.nli_ensemble_votes}"
+            )
+        if not 0.5 <= self.nli_min_agreement <= 1.0:
+            raise ValueError(
+                f"nli_min_agreement must be in [0.5, 1.0], got {self.nli_min_agreement}"
             )
         if self.verification_timeout_s < 1:
             raise ValueError(
@@ -93,6 +103,8 @@ def load_config(path: str | Path | None = None) -> TraceLensConfig:
         temperature=tl.get("temperature", 0.1),
         max_concurrent_verifications=tl.get("max_concurrent_verifications", 1),
         verification_timeout_s=tl.get("verification_timeout_s", 60),
+        nli_ensemble_votes=tl.get("nli_ensemble_votes", 3),
+        nli_min_agreement=tl.get("nli_min_agreement", 0.67),
         costs=costs,
     )
     cfg.validate()
