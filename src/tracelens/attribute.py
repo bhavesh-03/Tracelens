@@ -197,3 +197,21 @@ def diagnose_trace(trace: Trace, config: TraceLensConfig) -> Diagnosis:
         summary=summary,
         diagnosed_at=datetime.now(UTC).isoformat(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Async wrapper — Phase 6
+# ---------------------------------------------------------------------------
+
+async def diagnose_trace_async(trace: "Trace", config: "TraceLensConfig") -> "Diagnosis":
+    """Async version of diagnose_trace — runs blocking LLM calls in a thread pool.
+
+    Use this from the FastAPI server so the event loop is never blocked.
+    The semaphore in config.max_concurrent_verifications still applies
+    (enforced by the sync path inside each thread).
+    """
+    import asyncio
+    return await asyncio.get_event_loop().run_in_executor(
+        None, diagnose_trace, trace, config
+    )
+

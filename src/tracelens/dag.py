@@ -45,8 +45,9 @@ def build_dag(trace: Trace) -> nx.DiGraph:
         )
 
     for step in trace.steps:
-        if step.parent_step_id is not None:
-            g.add_edge(step.parent_step_id, step.step_id)
+        for parent_id in step.parent_span_ids:
+            if parent_id in g:
+                g.add_edge(parent_id, step.step_id)
 
     if not nx.is_directed_acyclic_graph(g):
         raise ValueError("Trace contains a cycle — cannot build a DAG")
@@ -55,11 +56,15 @@ def build_dag(trace: Trace) -> nx.DiGraph:
 
 
 def get_root(g: nx.DiGraph) -> str:
-    """Return the single root node (in-degree 0). Raises if not exactly one."""
+    """Return the primary root node (in-degree 0).
+
+    In fan-out pipelines there may technically be a single root that fans out.
+    Raises if there are no roots at all.
+    """
     roots = [n for n in g.nodes if g.in_degree(n) == 0]
-    if len(roots) != 1:
-        raise ValueError(f"Expected exactly 1 root, found {len(roots)}: {roots}")
-    return roots[0]
+    if not roots:
+        raise ValueError("Graph has no root node (no node with in-degree 0)")
+    return roots[0]  # primary root
 
 
 def get_leaves(g: nx.DiGraph) -> list[str]:

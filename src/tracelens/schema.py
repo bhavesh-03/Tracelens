@@ -51,11 +51,29 @@ class TraceStep(BaseModel):
     step_id: str
     agent_name: str
     step_type: Literal["router", "agent", "tool", "synthesizer", "llm_call", "custom"]
-    parent_step_id: str | None = None
+    parent_step_id: str | None = None          # kept for backwards-compat; single-parent shorthand
+    parent_span_ids: list[str] = Field(default_factory=list)  # multi-parent (fan-in)
     io: StepIO = Field(default_factory=StepIO)
     timestamp_ms: float = 0.0
     duration_ms: float = 0.0
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def sync_parent_ids(self) -> "TraceStep":
+        """Keep parent_step_id and parent_span_ids in sync.
+
+        Rules:
+          - If parent_span_ids is set, derive parent_step_id from first entry.
+          - If parent_step_id is set but parent_span_ids is empty, populate it.
+          - Both empty → root step (valid).
+        """
+        if self.parent_span_ids and self.parent_step_id is None:
+            # Multi-parent provided — back-fill the single-parent shorthand
+            object.__setattr__(self, "parent_step_id", self.parent_span_ids[0])
+        elif self.parent_step_id and not self.parent_span_ids:
+            # Single-parent provided — populate the list
+            object.__setattr__(self, "parent_span_ids", [self.parent_step_id])
+        return self
 
     @field_validator("step_id")
     @classmethod
@@ -109,31 +127,32 @@ class Trace(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def parent_ids_are_valid(self) -> Trace:
-        """Every non-root step's parent_step_id must reference an existing step."""
+    def parent_ids_are_valid(self) -> "Trace":
+        """Every parent ID referenced must point to a real step in this trace."""
         valid_ids = {s.step_id for s in self.steps}
         for step in self.steps:
-            if step.parent_step_id is not None and step.parent_step_id not in valid_ids:
-                raise ValueError(
-                    f"step {step.step_id!r} references parent {step.parent_step_id!r} "
-                    f"which does not exist in this trace"
-                )
+            for pid in step.parent_span_ids:
+                if pid not in valid_ids:
+                    raise ValueError(
+                        f"step {step.step_id!r} references parent {pid!r} "
+                        f"which does not exist in this trace"
+                    )
         return self
 
     @model_validator(mode="after")
-    def exactly_one_root(self) -> Trace:
-        """Exactly one step must have parent_step_id=None (the root)."""
-        roots = [s for s in self.steps if s.parent_step_id is None]
+    def at_least_one_root(self) -> "Trace":
+        """At least one step must have no parents (the root(s)).
+
+        Fan-out pipelines may have ONE logical root.
+        We allow multiple roots only if they share no common ancestor,
+        but for simplicity we just require at least one root.
+        """
+        roots = [s for s in self.steps if not s.parent_span_ids]
         if len(roots) == 0:
-            raise ValueError("trace has no root step (a step with parent_step_id=None)")
-        if len(roots) > 1:
-            root_ids = [r.step_id for r in roots]
-            raise ValueError(
-                f"trace has {len(roots)} root steps ({root_ids}), expected exactly 1"
-            )
+            raise ValueError("trace has no root step (a step with no parent_span_ids)")
         return self
 
-    def get_step(self, step_id: str) -> TraceStep:
+    def get_step(self, step_id: str) -> "TraceStep":
         """Look up a step by its ID. Raises ValueError if not found."""
         for s in self.steps:
             if s.step_id == step_id:
@@ -141,18 +160,23 @@ class Trace(BaseModel):
         raise ValueError(f"step {step_id!r} not found in trace {self.trace_id!r}")
 
     @property
-    def root_step(self) -> TraceStep:
-        """The single root step (parent_step_id is None)."""
-        for s in self.steps:
-            if s.parent_step_id is None:
-                return s
-        raise ValueError("no root step found")  # unreachable after validation
+    def root_steps(self) -> list["TraceStep"]:
+        """All root steps (no parents). Usually one, but fan-out allows more."""
+        return [s for s in self.steps if not s.parent_span_ids]
 
     @property
-    def leaf_steps(self) -> list[TraceStep]:
+    def root_step(self) -> "TraceStep":
+        """The primary root step. For backwards compat; use root_steps for fan-out."""
+        roots = self.root_steps
+        return roots[0] if roots else self.steps[0]
+
+    @property
+    def leaf_steps(self) -> list["TraceStep"]:
         """Steps that are not the parent of any other step."""
-        parent_ids = {s.parent_step_id for s in self.steps}
-        return [s for s in self.steps if s.step_id not in parent_ids]
+        all_parent_ids: set[str] = set()
+        for s in self.steps:
+            all_parent_ids.update(s.parent_span_ids)
+        return [s for s in self.steps if s.step_id not in all_parent_ids]
 
     def to_json_file(self, path: str | Path) -> Path:
         """Serialize trace to a formatted JSON file."""

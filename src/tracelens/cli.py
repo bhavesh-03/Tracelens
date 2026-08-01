@@ -194,3 +194,33 @@ def dashboard(
         [sys.executable, "-m", "streamlit", "run", str(dashboard_path)],
         check=False,
     )
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Bind host"),
+    port: int = typer.Option(4318, "--port", "-p", help="Bind port (default: 4318, mirrors OTLP)"),
+    config: Path = typer.Option(None, "--config", "-c", help="Path to tracelens.toml"),
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes (dev mode)"),
+) -> None:
+    """Start the TraceLens HTTP ingest API server.
+
+    Accepts spans from any language via HTTP POST /v1/spans.
+    Finalize a trace via POST /v1/traces/{trace_id}/finalize.
+
+    Default port 4318 mirrors the OpenTelemetry OTLP HTTP port.
+    """
+    import uvicorn
+
+    typer.echo(f"Starting TraceLens ingest API on http://{host}:{port}")
+    typer.echo(f"  POST /v1/spans              — push a span")
+    typer.echo(f"  POST /v1/traces/{{id}}/finalize — finalize + diagnose")
+    typer.echo(f"  GET  /docs                  — interactive API docs")
+    typer.echo()
+    uvicorn.run(
+        "tracelens.server:app",
+        host=host,
+        port=port,
+        reload=reload,
+        log_level="info",
+    )
