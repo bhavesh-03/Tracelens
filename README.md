@@ -1,61 +1,101 @@
 # TraceLens
 
-Automated causal root-cause diagnostics for multi-agent AI systems.
+**Automated causal root-cause diagnostics for multi-agent AI systems.**
 
-When a multi-agent pipeline produces a wrong answer, TraceLens captures the
-execution trace, builds a directed acyclic graph (DAG) of agent steps, and
-automatically pinpoints **which agent introduced the error** — with a
-confidence score and human-readable explanation.
+When a multi-agent pipeline produces a wrong answer, TraceLens captures the execution trace, builds a graph of how information flowed between agents, and automatically identifies **which agent introduced the hallucination** — with an ensemble-verified confidence score and human-readable evidence.
 
-Think of it as a diagnostic engine: Langfuse/Phoenix *show* you logs,
-TraceLens *tells* you what broke and why.
+> Think of it like this: Langfuse and Phoenix *show* you logs. TraceLens *tells* you what broke and why.
 
 ---
 
-## Setup
+## How It Works
+
+```
+Your Chatbot                         TraceLens
+────────────                         ─────────────────────────────────────
+User: "Fix my bug"
+  │
+  ├──> RouterAgent runs         ──> Captured as step_000
+  ├──> CodeReviewAgent runs     ──> Captured as step_001  
+  ├──> SecurityAgent runs       ──> Captured as step_002 ← hallucinates
+  └──> Synthesizer responds     ──> Captured as step_003
+                                        │
+                                        ▼
+                                  Ensemble NLI Judge
+                                  (3 independent votes per claim)
+                                        │
+                                        ▼
+                               Dashboard auto-updates →
+                               SecurityAgent highlighted 🔴
+                               "Known firmware bug" = ungrounded
+                               NLI votes: {ungrounded: 2, grounded: 1}
+```
+
+---
+
+## Quick Start
 
 ```bash
-# Clone and enter the repo
-git clone <your-repo-url>
-cd tracelens
+# 1. Install
+git clone <repo-url> && cd tracelens
+uv sync && source .venv/bin/activate
 
-# Install dependencies
-uv sync
+# 2. Set your API key (used by the NLI judge)
+echo "GOOGLE_API_KEY=your_key" > .env
 
-# Activate the virtual environment
-source .venv/bin/activate
+# 3. Instrument your agent
+python examples/customer_support_study.py
 
-# Add your Google API key (get one from aistudio.google.com)
-echo "GOOGLE_API_KEY=your_key_here" > .env
+# 4. Launch the dashboard
+tracelens dashboard
+# → Open http://localhost:8501 (auto-refreshes every 5 seconds)
 ```
+
+---
+
+## SDK — 30-second Integration
+
+```python
+from tracelens.capture import TraceLensCapture
+from tracelens.store import connect, save_trace
+
+# One tracer per user request
+tracer = TraceLensCapture(project_name="my_chatbot")
+
+# Wrap each agent with a context manager
+with tracer.step("RouterAgent", step_type="router", input_text=user_query) as io:
+    io.output_text = my_router(user_query)
+
+with tracer.step("AnswerAgent", step_type="agent", input_text=io.output_text) as io:
+    io.output_text = my_agent(io.output_text)
+    io.model = "gemini-2.5-flash"
+
+# Save to DB
+trace = tracer.finalize(query=user_query, final_answer=io.output_text)
+save_trace(connect("tracelens.db"), trace)
+```
+
+**→ See [DOCUMENTATION.md](./DOCUMENTATION.md) for the full SDK guide, all integration patterns, CLI reference, and configuration options.**
 
 ---
 
 ## Commands
 
-**Run the code reviewer agent interactively:**
 ```bash
-python -m examples.code_reviewer.chat
-```
+# Diagnose a stored trace (runs ensemble NLI + attribution engine)
+tracelens diagnose <trace_id>
 
-**Diagnose a stored trace:**
-```bash
-tracelens diagnose --trace-id <id>
-```
-
-**View diagnostic report:**
-```bash
+# View all stored diagnoses
 tracelens report
-```
 
-**Run all tests (no network, no API calls needed):**
-```bash
-python -m pytest -v
-```
+# Ingest a trace from a JSON file
+tracelens ingest trace.json
 
-**Launch the interactive dashboard:**
-```bash
+# Launch the live dashboard
 tracelens dashboard
+
+# Run tests
+python -m pytest -v
 ```
 
 ---
@@ -63,27 +103,24 @@ tracelens dashboard
 ## Architecture
 
 ```
-tracelens/
-├── src/tracelens/           # The framework (library + CLI)
-│   ├── schema.py            # Trace, TraceStep, Claim data models
-│   ├── capture.py           # Instrumentation SDK (decorators/context managers)
-│   ├── dag.py               # DAG builder (networkx)
-│   ├── claims.py            # Claim decomposition engine
-│   ├── verify.py            # Step-level entailment verification
-│   ├── attribute.py         # Causal attribution scoring
-│   ├── store.py             # SQLite persistence
-│   ├── config.py            # tracelens.toml loader
-│   └── cli.py               # Typer CLI
-├── examples/code_reviewer/  # Subject agent (what gets diagnosed)
-│   ├── agent.py             # Multi-agent code reviewer
-│   ├── fixtures/            # Pre-recorded responses
-│   └── chat.py              # Interactive REPL
-├── study/                   # Defect injection study
-│   ├── injections.py        # Synthetic defect catalog
-│   └── run_study.py         # Precision/recall measurement
-├── dashboard/
-│   └── app.py               # Streamlit DAG viewer
-└── tests/
+src/tracelens/
+├── schema.py       Trace, TraceStep, StepIO, Claim, Diagnosis data models
+├── capture.py      Instrumentation SDK (decorator + context manager + manual API)
+├── dag.py          DAG builder (networkx DiGraph)
+├── claims.py       LLM-based claim decomposition engine
+├── verify.py       Ensemble NLI judge (majority vote, calibrated confidence)
+├── attribute.py    Bayesian causal attribution scoring engine
+├── store.py        SQLite persistence
+├── config.py       tracelens.toml loader
+├── cli.py          Typer CLI (ingest, diagnose, report, dashboard)
+└── dashboard/
+    ├── dashboard.py    Streamlit app with 5-second auto-refresh
+    └── components.py   pyvis graph, Gantt timeline, diagnosis panels
+
+examples/
+├── code_reviewer/          Multi-agent code review system
+├── defect_study.py         Proves TraceLens catches hallucinations mathematically
+└── customer_support_study.py  Batch trace generation with mixed healthy/defective
 ```
 
 ---
@@ -92,13 +129,29 @@ tracelens/
 
 | Phase | Description | Status |
 |---|---|---|
-| 0 | Scaffold — pyproject, config, CLI stub | ✅ Done |
+| 0 | Scaffold — pyproject, config, CLI | ✅ Done |
 | 1 | Trace schema & capture SDK | ✅ Done |
-| 2 | Subject agent (multi-agent code reviewer) | ✅ Done |
-| 3 | Trace store (SQLite) & DAG builder | ✅ Done |
+| 2 | Multi-agent code reviewer example | ✅ Done |
+| 3 | SQLite store & DAG builder | ✅ Done |
 | 4 | Claim decomposition engine | ✅ Done |
-| 5 | Step-level entailment verification | ✅ Done |
+| 5 | NLI entailment verification | ✅ Done |
 | 6 | Causal attribution scoring | ✅ Done |
 | 7 | CLI diagnostic commands | ✅ Done |
 | 8 | Defect injection study | ✅ Done |
-| 9 | Interactive DAG dashboard & release polish | ✅ Done |
+| 9 | Streamlit dashboard | ✅ Done |
+| 3B | Ensemble NLI (non-determinism fix) | ✅ Done |
+| 3A | Fixed attribution formula (leaf-bias) | ✅ Done |
+| 4A | pyvis interactive graph | ✅ Done |
+| 4B | Live auto-refresh dashboard | ✅ Done |
+| **Next** | **HTTP Ingest API + Multi-parent DAG** | 🔲 Planned |
+| **Next** | **LangChain / AutoGen / CrewAI integrations** | 🔲 Planned |
+
+---
+
+## Documentation
+
+| Document | Description |
+|---|---|
+| [DOCUMENTATION.md](./DOCUMENTATION.md) | Full SDK guide — integration patterns, CLI reference, schema, how the engine works |
+| [tracelens.toml](./tracelens.toml) | Annotated configuration file with all available options |
+| [examples/](./examples/) | Working code examples you can run directly |
