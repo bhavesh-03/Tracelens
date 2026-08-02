@@ -2,7 +2,7 @@
 # Copy and edit this file per project; it is loaded from the working directory.
 
 [tracelens]
-judge_model = "gemini/gemini-2.5-flash"     # litellm model string for claim verification
+judge_model = "gemini/gemini-3.5-flash"     # litellm model string for claim verification
 max_claims_per_step = 20                     # cap on claim decomposition per step
 attribution_threshold = 0.15                 # flag step as root cause if score > this
                                              # (lowered from 0.7 — new formula produces smaller scores)
@@ -12,7 +12,7 @@ max_concurrent_verifications = 1             # keep 1 on Gemini free tier (15 re
 verification_timeout_s = 60                  # per-verification timeout in seconds
 
 # Ensemble NLI settings — controls non-determinism correction
-nli_ensemble_votes = 3          # number of independent NLI judge calls per claim
+nli_ensemble_votes = 1          # number of independent NLI judge calls per claim
                                 # 1 = single-shot (fast, non-deterministic)
                                 # 3 = recommended (good balance of cost vs accuracy)
                                 # 5 = high-confidence (slower, more expensive)

@@ -118,6 +118,7 @@ def _single_verify(
             ],
             temperature=config.temperature,
             response_format={"type": "json_object"},
+            num_retries=3,
         )
         raw = response.choices[0].message.content or ""
         clean = raw.strip()

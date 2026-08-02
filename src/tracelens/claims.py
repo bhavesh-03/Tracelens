@@ -59,6 +59,7 @@ def decompose_into_claims(text: str, step_id: str, config: TraceLensConfig) -> l
             ],
             temperature=config.temperature,
             response_format={"type": "json_object"},
+            num_retries=3,
         )
         
         raw_output = response.choices[0].message.content
