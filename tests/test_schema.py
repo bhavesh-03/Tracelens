@@ -90,17 +90,17 @@ class TestTraceValidation:
                 steps=[],
             )
 
-    def test_multiple_roots_raises(self) -> None:
-        with pytest.raises(ValidationError, match="root steps"):
-            Trace(
-                trace_id="t1",
-                query="q",
-                final_answer="a",
-                steps=[
-                    _make_step(step_id="s1"),  # root 1
-                    _make_step(step_id="s2"),  # root 2 (also no parent)
-                ],
-            )
+    def test_multiple_roots_allowed(self) -> None:
+        trace = Trace(
+            trace_id="t1",
+            query="q",
+            final_answer="a",
+            steps=[
+                _make_step(step_id="s1"),  # root 1
+                _make_step(step_id="s2"),  # root 2 (also no parent)
+            ],
+        )
+        assert len(trace.root_steps) == 2
 
     def test_invalid_parent_reference_raises(self) -> None:
         with pytest.raises(ValidationError, match="does not exist"):

@@ -202,17 +202,20 @@ def render_timeline(trace: Trace) -> None:
 
     import plotly.express as px
     import pandas as pd
+    from datetime import datetime, timezone
 
     data = []
     for step in trace.steps:
-        start_s = step.timestamp_ms / 1000
-        end_s = start_s + (step.duration_ms / 1000)
+        start_dt = datetime.fromtimestamp(step.timestamp_ms / 1000, tz=timezone.utc)
+        # Ensure a minimum visible bar width of 100ms for very fast steps
+        duration_ms = max(step.duration_ms, 100)
+        end_dt = datetime.fromtimestamp((step.timestamp_ms + duration_ms) / 1000, tz=timezone.utc)
         data.append({
             "Agent": f"{step.agent_name} ({step.step_type})",
-            "Start": start_s,
-            "Finish": end_s,
+            "Start": start_dt,
+            "Finish": end_dt,
             "Step ID": step.step_id,
-            "Duration (ms)": step.duration_ms,
+            "Duration (ms)": round(step.duration_ms, 1),
         })
 
     if not data:
@@ -220,9 +223,6 @@ def render_timeline(trace: Trace) -> None:
         return
 
     df = pd.DataFrame(data)
-    # Use absolute times if they differ, otherwise show relative
-    if df["Start"].nunique() == 1:
-        st.info("Timeline shows relative ordering (no precise timing data captured).")
 
     fig = px.timeline(
         df,

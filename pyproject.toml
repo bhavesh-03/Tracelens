@@ -28,6 +28,13 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
 ]
 
+[project.optional-dependencies]
+integrations = [
+    "langchain-core>=0.2.0",
+    "crewai>=0.30.0",
+    "pyautogen>=0.2.27",
+]
+
 [project.scripts]
 tracelens = "tracelens.cli:app"
 

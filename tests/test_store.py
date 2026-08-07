@@ -74,8 +74,8 @@ class TestSaveAndLoad:
         loaded = load_trace(conn, "t1")
         step = loaded["steps"][1]  # agent_a step
         assert step["agent_name"] == "agent_a"
-        assert step["tool_name"] == "search"
-        assert step["tool_output"] == "search results"
+        assert step["io"]["tool_name"] == "search"
+        assert step["io"]["tool_output"] == "search results"
         conn.close()
 
     def test_load_missing_raises(self, tmp_path: Path) -> None:

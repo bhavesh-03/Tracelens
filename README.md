@@ -79,6 +79,27 @@ save_trace(connect("tracelens.db"), trace)
 
 ---
 
+## Integrations
+
+TraceLens provides native integrations for popular multi-agent frameworks:
+
+```python
+# LangChain
+from tracelens.integrations import TraceLensCallbackHandler
+handler = TraceLensCallbackHandler(tracer)
+chain.invoke({"input": "..."}, config={"callbacks": [handler]})
+
+# CrewAI
+from tracelens.integrations import instrument_crew
+instrument_crew(my_crew, tracer)
+
+# AutoGen
+from tracelens.integrations import instrument_autogen_agent
+instrument_autogen_agent(my_agent, tracer)
+```
+
+---
+
 ## Commands
 
 ```bash
@@ -143,8 +164,8 @@ examples/
 | 3A | Fixed attribution formula (leaf-bias) | ✅ Done |
 | 4A | pyvis interactive graph | ✅ Done |
 | 4B | Live auto-refresh dashboard | ✅ Done |
-| **Next** | **HTTP Ingest API + Multi-parent DAG** | 🔲 Planned |
-| **Next** | **LangChain / AutoGen / CrewAI integrations** | 🔲 Planned |
+| 10 | HTTP Ingest API + Multi-parent DAG | ✅ Completed |
+| 11 | LangChain / AutoGen / CrewAI integrations | ✅ Completed |
 
 ---
 

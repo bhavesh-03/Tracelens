@@ -243,8 +243,15 @@ def load_trace(conn: sqlite3.Connection, trace_id: str) -> dict:
     if row is None:
         raise ValueError(f"Trace {trace_id!r} not found")
 
-    trace_dict = dict(row)
-    trace_dict["tags"] = json.loads(trace_dict.get("tags_json") or "[]")
+    raw = dict(row)
+    trace_dict = {
+        "trace_id": raw["trace_id"],
+        "project_name": raw.get("project_name", "default"),
+        "query": raw["query"],
+        "final_answer": raw["final_answer"],
+        "expected_answer": raw.get("expected_answer"),
+        "tags": json.loads(raw.get("tags_json") or "[]"),
+    }
 
     step_rows = conn.execute(
         "SELECT * FROM steps WHERE trace_id = ? ORDER BY timestamp_ms", (trace_id,)
@@ -253,24 +260,36 @@ def load_trace(conn: sqlite3.Connection, trace_id: str) -> dict:
     steps = []
     for sr in step_rows:
         sd = dict(sr)
-        # Reconstruct io sub-object
-        sd["io"] = {
-            "input_text": sd.get("input_text") or "",
-            "output_text": sd.get("output_text") or "",
-            "tool_name": sd.get("tool_name"),
-            "tool_args": json.loads(sd.get("tool_args_json") or "{}"),
-            "tool_output": sd.get("tool_output"),
-            "model": sd.get("model"),
-        }
+
         # Restore multi-parent list
         raw_ids = sd.get("parent_span_ids_json")
         if raw_ids:
-            sd["parent_span_ids"] = json.loads(raw_ids)
+            parent_span_ids = json.loads(raw_ids)
         else:
-            sd["parent_span_ids"] = (
+            parent_span_ids = (
                 [sd["parent_step_id"]] if sd.get("parent_step_id") else []
             )
-        steps.append(sd)
+
+        # Build a clean step dict with only the fields TraceStep expects
+        clean_step = {
+            "step_id": sd["step_id"],
+            "agent_name": sd["agent_name"],
+            "step_type": sd["step_type"],
+            "parent_step_id": sd.get("parent_step_id"),
+            "parent_span_ids": parent_span_ids,
+            "io": {
+                "input_text": sd.get("input_text") or "",
+                "output_text": sd.get("output_text") or "",
+                "tool_name": sd.get("tool_name"),
+                "tool_args": json.loads(sd.get("tool_args_json") or "{}"),
+                "tool_output": sd.get("tool_output"),
+                "model": sd.get("model"),
+            },
+            "timestamp_ms": sd.get("timestamp_ms", 0.0),
+            "duration_ms": sd.get("duration_ms", 0.0),
+            "metadata": json.loads(sd.get("metadata_json") or "{}"),
+        }
+        steps.append(clean_step)
 
     trace_dict["steps"] = steps
     return trace_dict

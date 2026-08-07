@@ -198,6 +198,8 @@ class TraceLensCapture:
         tool_output: str | None = None,
         duration_ms: float = 0.0,
         metadata: dict[str, Any] | None = None,
+        step_id: str | None = None,
+        timestamp_ms: float | None = None,
     ) -> str:
         """Manually add a step to the trace.
 
@@ -206,8 +208,13 @@ class TraceLensCapture:
 
         Returns the step_id of the newly added step.
         """
-        step_id = f"step_{self._step_counter:03d}"
-        self._step_counter += 1
+        if not step_id:
+            step_id = f"step_{self._step_counter:03d}"
+            self._step_counter += 1
+            
+        if timestamp_ms is None:
+            timestamp_ms = time.time() * 1000
+            
         self._steps.append(_RawStep(
             step_id=step_id,
             agent_name=agent_name,
@@ -219,7 +226,7 @@ class TraceLensCapture:
             tool_name=tool_name,
             tool_args=tool_args or {},
             tool_output=tool_output,
-            timestamp_ms=time.time() * 1000,
+            timestamp_ms=timestamp_ms,
             duration_ms=duration_ms,
             metadata=metadata or {},
         ))

@@ -22,7 +22,7 @@ def test_compute_p_ungrounded() -> None:
     c3 = Claim(claim_id="3", text="x", source_step_id="s1", verdict="uncertain", confidence=0.5)
     assert compute_p_ungrounded(c3) == pytest.approx(0.5)
 
-@patch("tracelens.attribute.verify_claim")
+@patch("tracelens.attribute.verify_claim_ensemble")
 @patch("tracelens.attribute.decompose_into_claims")
 def test_diagnose_trace_linear_hallucination(mock_decompose, mock_verify) -> None:
     """Test a linear A -> B -> C trace where B hallucinates."""
@@ -43,14 +43,14 @@ def test_diagnose_trace_linear_hallucination(mock_decompose, mock_verify) -> Non
     config = TraceLensConfig(attribution_threshold=0.4)
 
     # Mock decompose: return 1 claim per step
-    def fake_decompose(text, step_id, cfg):
+    def fake_decompose(text, step_id, config=None):
         return [Claim(claim_id=f"{step_id}_c1", text="Syntax is bad", source_step_id=step_id)]
     mock_decompose.side_effect = fake_decompose
 
     # Mock verify: 
     # Linter (s2) hallucinates (it had no tool output, just guessed)
     # Coordinator (s1) is innocent (it just copied Linter)
-    def fake_verify(claim, parent, cfg):
+    def fake_verify(claim, step, trace_steps, config):
         if claim.source_step_id == "s2":
             claim.verdict = "ungrounded"
             claim.confidence = 0.95

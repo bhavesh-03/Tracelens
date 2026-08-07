@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import time
 from collections import Counter
 
 import litellm
@@ -25,6 +27,10 @@ from tracelens.config import TraceLensConfig
 from tracelens.schema import Claim, TraceStep
 
 logger = logging.getLogger(__name__)
+
+# Rate limiter: tracks the minimum allowed time between LLM calls
+_last_call_time = 0.0
+_MIN_CALL_INTERVAL = 1.5  # seconds between calls (safe for 5 RPM free tier with some margin)
 
 
 ENTAILMENT_SYSTEM_PROMPT = """You are a strict logical entailment checker (NLI judge).
@@ -105,39 +111,68 @@ def _single_verify(
     claim: Claim,
     evidence_text: str,
     config: TraceLensConfig,
+    max_retries: int = 5,
 ) -> tuple[str, str, float]:
-    """One NLI judge call. Returns (verdict, evidence_quote, confidence)."""
+    """One NLI judge call with rate-limit-aware retry. Returns (verdict, evidence_quote, confidence)."""
+    global _last_call_time
     user_prompt = f'CLAIM: "{claim.text}"\n\nEVIDENCE:\n{evidence_text}'
 
-    try:
-        response = litellm.completion(
-            model=config.judge_model,
-            messages=[
-                {"role": "system", "content": ENTAILMENT_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=config.temperature,
-            response_format={"type": "json_object"},
-            num_retries=3,
-        )
-        raw = response.choices[0].message.content or ""
-        clean = raw.strip()
-        if clean.startswith("```json"):
-            clean = clean[7:]
-        if clean.endswith("```"):
-            clean = clean[:-3]
+    for attempt in range(max_retries):
+        # Throttle: ensure minimum interval between calls
+        now = time.time()
+        wait = _MIN_CALL_INTERVAL - (now - _last_call_time)
+        if wait > 0:
+            time.sleep(wait)
+        _last_call_time = time.time()
 
-        data = json.loads(clean.strip())
-        verdict = data.get("verdict", "uncertain")
-        if verdict not in ("grounded", "ungrounded", "uncertain"):
-            verdict = "uncertain"
-        evidence_quote = str(data.get("evidence", ""))
-        confidence = float(data.get("confidence", 0.0))
-        return verdict, evidence_quote, confidence
+        try:
+            response = litellm.completion(
+                model=config.judge_model,
+                messages=[
+                    {"role": "system", "content": ENTAILMENT_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=config.temperature,
+                response_format={"type": "json_object"},
+                num_retries=0,  # we handle retries ourselves
+            )
+            raw = response.choices[0].message.content or ""
+            clean = raw.strip()
+            if clean.startswith("```json"):
+                clean = clean[7:]
+            if clean.endswith("```"):
+                clean = clean[:-3]
 
-    except Exception as e:
-        logger.warning(f"NLI judge call failed for claim '{claim.claim_id}': {e}")
-        return "uncertain", f"Error: {e}", 0.0
+            data = json.loads(clean.strip())
+            verdict = data.get("verdict", "uncertain")
+            if verdict not in ("grounded", "ungrounded", "uncertain"):
+                verdict = "uncertain"
+            evidence_quote = str(data.get("evidence", ""))
+            confidence = float(data.get("confidence", 0.0))
+            return verdict, evidence_quote, confidence
+
+        except Exception as e:
+            error_str = str(e)
+            # Check if it's a rate limit error and retry with backoff
+            if "429" in error_str or "RateLimitError" in type(e).__name__:
+                # Extract retry delay from error if available
+                retry_match = re.search(r"retry in (\d+(?:\.\d+)?)s", error_str, re.IGNORECASE)
+                if retry_match:
+                    wait_time = float(retry_match.group(1)) + 2  # add buffer
+                else:
+                    wait_time = 15 * (attempt + 1)  # escalating backoff
+                logger.info(
+                    f"Rate limited on claim '{claim.claim_id}' "
+                    f"(attempt {attempt+1}/{max_retries}), waiting {wait_time:.0f}s..."
+                )
+                time.sleep(wait_time)
+                continue
+            else:
+                logger.warning(f"NLI judge call failed for claim '{claim.claim_id}': {e}")
+                return "uncertain", f"Error: {e}", 0.0
+
+    logger.warning(f"NLI judge exhausted retries for claim '{claim.claim_id}'")
+    return "uncertain", "Error: rate limit exceeded after retries", 0.0
 
 
 def verify_claim_ensemble(
@@ -203,7 +238,12 @@ def verify_claim_ensemble(
 
     # Mutate the claim with ensemble results
     claim.verdict = final_verdict
-    claim.grounded = (final_verdict == "grounded")
+    if final_verdict == "grounded":
+        claim.grounded = True
+    elif final_verdict == "ungrounded":
+        claim.grounded = False
+    else:
+        claim.grounded = None
     claim.evidence = best_evidence
     claim.confidence = calibrated_conf
     claim.agreement_score = round(agreement, 4)
