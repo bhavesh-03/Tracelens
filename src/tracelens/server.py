@@ -23,14 +23,16 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import time
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from tracelens.config import load_config
+from tracelens.privacy import redact_value
 from tracelens.schema import StepIO, Trace, TraceStep
 from tracelens.store import (
     connect,
@@ -38,6 +40,7 @@ from tracelens.store import (
     list_traces,
     load_diagnosis,
     load_trace,
+    purge_expired_data,
     save_diagnosis,
     save_span,
     save_trace,
@@ -57,19 +60,13 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # ---------------------------------------------------------------------------
 # Dependency: shared config + DB connection
 # ---------------------------------------------------------------------------
 
 _cfg = None
 _conn = None
+_last_retention_cleanup = 0.0
 
 
 def _get_cfg():
@@ -84,6 +81,86 @@ def _get_conn():
     if _conn is None:
         _conn = connect(_get_cfg().db_path)
     return _conn
+
+
+def _is_loopback(request: Request) -> bool:
+    return request.client is not None and request.client.host in {"127.0.0.1", "::1"}
+
+
+def _cors_headers(origin: str) -> dict[str, str]:
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, X-TraceLens-API-Key",
+        "Vary": "Origin",
+    }
+
+
+def _cleanup_expired_data() -> None:
+    """Run configured retention cleanup at most once every five minutes."""
+    global _last_retention_cleanup
+    cfg = _get_cfg()
+    if cfg.retention_days is None or time.monotonic() - _last_retention_cleanup < 300:
+        return
+    counts = purge_expired_data(_get_conn(), cfg.retention_days)
+    _last_retention_cleanup = time.monotonic()
+    if counts["traces"] or counts["buffered_spans"]:
+        logger.info("Retention cleanup removed %s", counts)
+
+
+@app.middleware("http")
+async def protect_api(request: Request, call_next):
+    """Apply authentication, origin controls, and a body-size limit to the API."""
+    cfg = _get_cfg()
+    origin = request.headers.get("origin")
+    if origin:
+        if origin not in cfg.allowed_origins:
+            return JSONResponse({"detail": "Origin is not allowed"}, status_code=403)
+        cors_headers = _cors_headers(origin)
+    else:
+        cors_headers = {}
+
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=cors_headers)
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            declared_length = int(content_length)
+        except ValueError:
+            return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
+        if declared_length > cfg.max_request_bytes:
+            return JSONResponse(
+                {"detail": "Request body exceeds configured size limit"},
+                status_code=413,
+                headers=cors_headers,
+            )
+    if request.method in {"POST", "PUT", "PATCH"}:
+        body = await request.body()
+        if len(body) > cfg.max_request_bytes:
+            return JSONResponse(
+                {"detail": "Request body exceeds configured size limit"},
+                status_code=413,
+                headers=cors_headers,
+            )
+
+    if request.url.path != "/v1/health":
+        provided_key = request.headers.get("X-TraceLens-API-Key", "")
+        if cfg.api_key:
+            if not secrets.compare_digest(provided_key, cfg.api_key):
+                return JSONResponse(
+                    {"detail": "Unauthorized"}, status_code=401, headers=cors_headers
+                )
+        elif not _is_loopback(request):
+            return JSONResponse(
+                {"detail": "Set TRACELENS_API_KEY before accepting non-local requests"},
+                status_code=503,
+                headers=cors_headers,
+            )
+
+    response = await call_next(request)
+    response.headers.update(cors_headers)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -168,8 +245,10 @@ async def ingest_span(span: SpanPayload):
     The span is stored in the span_buffer table until the trace is finalized.
     Spans may arrive out of order — that's fine, they're assembled at finalize time.
     """
+    _cleanup_expired_data()
     conn = _get_conn()
-    save_span(conn, span.model_dump())
+    safe_span = redact_value(span.model_dump(), _get_cfg())
+    save_span(conn, safe_span)
     logger.info(f"Buffered span {span.span_id} for trace {span.trace_id}")
     return SpanResponse(status="buffered", span_id=span.span_id, trace_id=span.trace_id)
 
@@ -186,6 +265,7 @@ async def finalize_trace(
     Diagnosis runs in the background (non-blocking).
     """
     conn = _get_conn()
+    _cleanup_expired_data()
 
     # Flush buffered spans
     spans = flush_span_buffer(conn, trace_id)
@@ -229,14 +309,14 @@ async def finalize_trace(
     trace = Trace(
         trace_id=trace_id,
         project_name=project_name,
-        query=payload.query,
-        final_answer=payload.final_answer,
-        expected_answer=payload.expected_answer,
+        query=redact_value(payload.query, _get_cfg()),
+        final_answer=redact_value(payload.final_answer, _get_cfg()),
+        expected_answer=redact_value(payload.expected_answer, _get_cfg()),
         steps=steps,
-        tags=list(set(all_tags)),
+        tags=list(set(redact_value(all_tags, _get_cfg()))),
     )
 
-    save_trace(conn, trace)
+    save_trace(conn, trace, _get_cfg())
     logger.info(f"Saved trace {trace_id} with {len(steps)} steps")
 
     # Schedule background diagnosis
@@ -290,6 +370,6 @@ async def get_trace_api(trace_id: str):
     try:
         trace_dict = load_trace(conn, trace_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     diagnosis = load_diagnosis(conn, trace_id)
     return {"trace": trace_dict, "diagnosis": diagnosis}

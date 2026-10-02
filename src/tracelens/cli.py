@@ -42,7 +42,7 @@ def ingest(
     trace = Trace(**raw)
     conn = connect(cfg.db_path)
     try:
-        save_trace(conn, trace)
+        save_trace(conn, trace, cfg)
         typer.echo(f"✓ Ingested trace {trace.trace_id!r} ({len(trace.steps)} steps)")
     finally:
         conn.close()
@@ -198,7 +198,7 @@ def dashboard(
 
 @app.command()
 def serve(
-    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Bind host"),
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Bind host"),
     port: int = typer.Option(4318, "--port", "-p", help="Bind port (default: 4318, mirrors OTLP)"),
     config: Path = typer.Option(None, "--config", "-c", help="Path to tracelens.toml"),
     reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes (dev mode)"),
@@ -212,10 +212,20 @@ def serve(
     """
     import uvicorn
 
+    from tracelens.config import load_config
+
+    cfg = load_config(config)
+    if host not in {"127.0.0.1", "::1", "localhost"} and not cfg.api_key:
+        typer.echo(
+            "Refusing to bind beyond loopback without TRACELENS_API_KEY or api_key in config.",
+            err=True,
+        )
+        raise typer.Exit(2) from None
+
     typer.echo(f"Starting TraceLens ingest API on http://{host}:{port}")
-    typer.echo(f"  POST /v1/spans              — push a span")
-    typer.echo(f"  POST /v1/traces/{{id}}/finalize — finalize + diagnose")
-    typer.echo(f"  GET  /docs                  — interactive API docs")
+    typer.echo("  POST /v1/spans              — push a span")
+    typer.echo("  POST /v1/traces/{id}/finalize — finalize + diagnose")
+    typer.echo("  GET  /docs                  — interactive API docs")
     typer.echo()
     uvicorn.run(
         "tracelens.server:app",
@@ -223,4 +233,25 @@ def serve(
         port=port,
         reload=reload,
         log_level="info",
+    )
+
+
+@app.command()
+def purge(
+    older_than_days: int = typer.Option(..., "--older-than-days", min=1),
+    config: Path = typer.Option(None, "--config", "-c", help="Path to tracelens.toml"),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation"),
+) -> None:
+    """Permanently delete traces and buffered spans older than a retention window."""
+    from tracelens.config import load_config
+    from tracelens.store import connect, purge_expired_data
+
+    if not yes and not typer.confirm(
+        f"Permanently delete trace data older than {older_than_days} day(s)?"
+    ):
+        raise typer.Exit(0) from None
+    cfg = load_config(config)
+    counts = purge_expired_data(connect(cfg.db_path), older_than_days)
+    typer.echo(
+        f"Deleted {counts['traces']} trace(s) and {counts['buffered_spans']} buffered span(s)."
     )

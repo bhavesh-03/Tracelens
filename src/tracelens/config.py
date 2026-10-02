@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass, field
+from os import getenv
 from pathlib import Path
 
 _DEFAULT_CONFIG_NAME = "tracelens.toml"
@@ -36,6 +37,12 @@ class TraceLensConfig:
     verification_timeout_s: int = 60
     nli_ensemble_votes: int = 3
     nli_min_agreement: float = 0.67
+    api_key: str | None = None
+    allowed_origins: tuple[str, ...] = ()
+    max_request_bytes: int = 1_000_000
+    redact_sensitive_data: bool = True
+    redaction_replacement: str = "[REDACTED]"
+    retention_days: int | None = None
     costs: CostConfig = field(default_factory=CostConfig)
 
     def validate(self) -> None:
@@ -65,6 +72,10 @@ class TraceLensConfig:
             raise ValueError(
                 f"verification_timeout_s must be >= 1, got {self.verification_timeout_s}"
             )
+        if self.max_request_bytes < 1:
+            raise ValueError("max_request_bytes must be >= 1")
+        if self.retention_days is not None and self.retention_days < 1:
+            raise ValueError("retention_days must be >= 1 when configured")
 
 
 def load_config(path: str | Path | None = None) -> TraceLensConfig:
@@ -105,6 +116,12 @@ def load_config(path: str | Path | None = None) -> TraceLensConfig:
         verification_timeout_s=tl.get("verification_timeout_s", 60),
         nli_ensemble_votes=tl.get("nli_ensemble_votes", 3),
         nli_min_agreement=tl.get("nli_min_agreement", 0.67),
+        api_key=getenv("TRACELENS_API_KEY") or tl.get("api_key"),
+        allowed_origins=tuple(tl.get("allowed_origins", [])),
+        max_request_bytes=tl.get("max_request_bytes", 1_000_000),
+        redact_sensitive_data=tl.get("redact_sensitive_data", True),
+        redaction_replacement=tl.get("redaction_replacement", "[REDACTED]"),
+        retention_days=tl.get("retention_days"),
         costs=costs,
     )
     cfg.validate()

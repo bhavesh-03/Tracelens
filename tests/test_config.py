@@ -21,6 +21,8 @@ class TestDefaults:
         assert cfg.temperature == 0.1
         assert cfg.max_concurrent_verifications == 1
         assert cfg.verification_timeout_s == 60
+        assert cfg.redact_sensitive_data is True
+        assert cfg.allowed_origins == ()
 
     def test_cost_defaults(self, tmp_path: Path) -> None:
         cfg = load_config(tmp_path / "nonexistent.toml")
@@ -39,6 +41,10 @@ max_claims_per_step = 10
 attribution_threshold = 0.5
 db_path = "custom.db"
 temperature = 0.3
+allowed_origins = ["https://app.example.com"]
+max_request_bytes = 2048
+redact_sensitive_data = false
+retention_days = 14
 
 [costs]
 input_per_million = 0.15
@@ -53,6 +59,10 @@ output_per_million = 0.60
         assert cfg.attribution_threshold == 0.5
         assert cfg.db_path == "custom.db"
         assert cfg.temperature == 0.3
+        assert cfg.allowed_origins == ("https://app.example.com",)
+        assert cfg.max_request_bytes == 2048
+        assert cfg.redact_sensitive_data is False
+        assert cfg.retention_days == 14
         assert cfg.costs.input_per_million == 0.15
         assert cfg.costs.output_per_million == 0.60
 
@@ -91,3 +101,8 @@ class TestValidation:
     def test_valid_config_passes(self) -> None:
         cfg = TraceLensConfig()
         cfg.validate()  # Should not raise
+
+    def test_invalid_retention_raises(self) -> None:
+        cfg = TraceLensConfig(retention_days=0)
+        with pytest.raises(ValueError, match="retention_days"):
+            cfg.validate()

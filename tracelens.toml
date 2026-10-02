@@ -11,6 +11,15 @@ temperature = 0.3                            # slightly higher temp improves ens
 max_concurrent_verifications = 1             # keep 1 on Gemini free tier (15 req/min)
 verification_timeout_s = 60                  # per-verification timeout in seconds
 
+# HTTP API security and trace privacy. Keep api_key out of this file in real
+# deployments; use the TRACELENS_API_KEY environment variable instead.
+# api_key = "set-via-environment-preferably"
+allowed_origins = []                         # exact browser origins allowed to call the API
+max_request_bytes = 1000000                  # reject larger HTTP request bodies
+redact_sensitive_data = true                 # redact common secrets and email addresses before storage
+redaction_replacement = "[REDACTED]"
+# retention_days = 30                         # automatically purge older trace data on ingestion
+
 # Ensemble NLI settings — controls non-determinism correction
 nli_ensemble_votes = 1          # number of independent NLI judge calls per claim
                                 # 1 = single-shot (fast, non-deterministic)

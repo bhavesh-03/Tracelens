@@ -12,7 +12,9 @@ from tracelens.store import (
     list_traces,
     load_diagnosis,
     load_trace,
+    purge_expired_data,
     save_diagnosis,
+    save_span,
     save_trace,
 )
 
@@ -85,6 +87,21 @@ class TestSaveAndLoad:
             load_trace(conn, "nonexistent")
         conn.close()
 
+    def test_redacts_sensitive_content_before_persistence(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "test.db"
+        conn = connect(db_path)
+        trace = _make_trace()
+        trace.query = "Contact alice@example.com with password=hunter2"
+        trace.steps[0].io.output_text = "Authorization: Bearer secret-token-value"
+
+        save_trace(conn, trace)
+
+        loaded = load_trace(conn, "t1")
+        assert "alice@example.com" not in loaded["query"]
+        assert "hunter2" not in loaded["query"]
+        assert "secret-token-value" not in loaded["steps"][0]["io"]["output_text"]
+        conn.close()
+
 
 class TestListTraces:
     def test_list_returns_all(self, tmp_path: Path) -> None:
@@ -103,6 +120,30 @@ class TestListTraces:
         conn = connect(db_path)
         traces = list_traces(conn)
         assert traces == []
+        conn.close()
+
+
+class TestRetention:
+    def test_purges_expired_traces_and_buffered_spans(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "test.db"
+        conn = connect(db_path)
+        save_trace(conn, _make_trace("expired"))
+        save_span(
+            conn,
+            {
+                "trace_id": "buffered",
+                "span_id": "buffered-step",
+                "agent_name": "agent",
+            },
+        )
+        with conn:
+            conn.execute("UPDATE traces SET created_at = '2000-01-01T00:00:00+00:00'")
+            conn.execute("UPDATE span_buffer SET received_at = '2000-01-01T00:00:00+00:00'")
+
+        counts = purge_expired_data(conn, retention_days=30)
+
+        assert counts == {"traces": 1, "buffered_spans": 1}
+        assert list_traces(conn) == []
         conn.close()
 
 

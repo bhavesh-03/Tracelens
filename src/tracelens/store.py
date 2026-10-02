@@ -13,9 +13,11 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from tracelens.config import TraceLensConfig
+from tracelens.privacy import redact_trace
 from tracelens.schema import Diagnosis, Trace
 
 # ---------------------------------------------------------------------------
@@ -171,12 +173,17 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return _get_pool(db_path).get()
 
 
-def save_trace(conn: sqlite3.Connection, trace: Trace) -> int:
+def save_trace(
+    conn: sqlite3.Connection,
+    trace: Trace,
+    config: TraceLensConfig | None = None,
+) -> int:
     """Persist a trace and all its steps. Returns the trace row ID.
 
     Uses a single transaction — a crash mid-save leaves no partial trace.
     Silently ignores duplicate trace_ids (idempotent).
     """
+    trace = redact_trace(trace, config or TraceLensConfig())
     now = datetime.now(UTC).isoformat()
 
     with conn:
@@ -339,6 +346,29 @@ def list_traces(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
         (limit,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def purge_expired_data(conn: sqlite3.Connection, retention_days: int) -> dict[str, int]:
+    """Delete stored traces and buffered spans older than ``retention_days``.
+
+    Related rows are deleted first so this also works with databases created
+    before foreign-key constraints were introduced for every related table.
+    """
+    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
+    with conn:
+        trace_rows = conn.execute(
+            "SELECT trace_id FROM traces WHERE created_at < ?", (cutoff,)
+        ).fetchall()
+        trace_ids = [row["trace_id"] for row in trace_rows]
+        if trace_ids:
+            placeholders = ", ".join("?" for _ in trace_ids)
+            conn.execute(f"DELETE FROM diagnoses WHERE trace_id IN ({placeholders})", trace_ids)
+            conn.execute(f"DELETE FROM steps WHERE trace_id IN ({placeholders})", trace_ids)
+            conn.execute(f"DELETE FROM traces WHERE trace_id IN ({placeholders})", trace_ids)
+        buffered = conn.execute(
+            "DELETE FROM span_buffer WHERE received_at < ?", (cutoff,)
+        ).rowcount
+    return {"traces": len(trace_ids), "buffered_spans": buffered}
 
 
 # ---------------------------------------------------------------------------

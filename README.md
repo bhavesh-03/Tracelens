@@ -131,8 +131,10 @@ Send spans to `POST /v1/spans`, then finalize the trace with
 available at `http://127.0.0.1:4318/docs`.
 
 **Security note:** the current HTTP service is intended for trusted local or
-private-network development. Do not expose it publicly: authentication,
-authorization, and trace-data redaction are not yet implemented.
+private-network development. To accept remote requests, set `TRACELENS_API_KEY`
+and send it as `X-TraceLens-API-Key`. Configure exact browser origins with
+`allowed_origins`; requests are size-limited and sensitive values are redacted
+before persistence by default.
 
 ## Commands
 
@@ -150,6 +152,10 @@ authorization, and trace-data redaction are not yet implemented.
 `tracelens.toml` controls the judge model, claim limit, attribution threshold,
 database path, ensemble vote count, and judge settings. The defaults use
 `gemini/gemini-2.5-flash` and write to `tracelens.db`.
+
+Set `retention_days` to automatically remove old traces and buffered spans during
+ingestion, or run `uv run tracelens purge --older-than-days 30` for an explicit,
+confirmed cleanup.
 
 ## Project status
 

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from os import getenv
 from typing import Any
 
 import httpx
@@ -47,10 +48,13 @@ class TraceLensHTTPClient:
         endpoint: str = "http://localhost:4318",
         timeout: float = 5.0,
         project_name: str = "default",
+        api_key: str | None = None,
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.project_name = project_name
-        self._client = httpx.Client(timeout=timeout)
+        key = api_key or getenv("TRACELENS_API_KEY")
+        headers = {"X-TraceLens-API-Key": key} if key else None
+        self._client = httpx.Client(timeout=timeout, headers=headers)
 
     def push_span(
         self,
@@ -138,7 +142,7 @@ class TraceLensHTTPClient:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "TraceLensHTTPClient":
+    def __enter__(self) -> TraceLensHTTPClient:
         return self
 
     def __exit__(self, *_: Any) -> None:
@@ -153,10 +157,13 @@ class AsyncTraceLensHTTPClient:
         endpoint: str = "http://localhost:4318",
         timeout: float = 5.0,
         project_name: str = "default",
+        api_key: str | None = None,
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.project_name = project_name
-        self._client = httpx.AsyncClient(timeout=timeout)
+        key = api_key or getenv("TRACELENS_API_KEY")
+        headers = {"X-TraceLens-API-Key": key} if key else None
+        self._client = httpx.AsyncClient(timeout=timeout, headers=headers)
 
     async def push_span(self, **kwargs: Any) -> str:
         """Async version of TraceLensHTTPClient.push_span."""
@@ -207,7 +214,7 @@ class AsyncTraceLensHTTPClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def __aenter__(self) -> "AsyncTraceLensHTTPClient":
+    async def __aenter__(self) -> AsyncTraceLensHTTPClient:
         return self
 
     async def __aexit__(self, *_: Any) -> None:
