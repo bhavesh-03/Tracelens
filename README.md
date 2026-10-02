@@ -74,6 +74,16 @@ uv run tracelens dashboard
 # Dashboard: http://localhost:8501
 ```
 
+Try the included end-to-end checkout incident example:
+
+```bash
+# Capture, redact, and persist a realistic trace without calling an LLM.
+uv run python examples/checkout_incident_demo.py
+
+# With a configured judge API key, run full claim verification and ranking.
+uv run python examples/checkout_incident_demo.py --diagnose
+```
+
 ## How a diagnosis works
 
 ```text
