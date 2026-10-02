@@ -1,178 +1,189 @@
-# TraceLens
+<h1 align="center">TraceLens</h1>
 
-**Automated causal root-cause diagnostics for multi-agent AI systems.**
+<p align="center">
+  Find where unsupported claims enter a multi-agent AI workflow.
+</p>
 
-When a multi-agent pipeline produces a wrong answer, TraceLens captures the execution trace, builds a graph of how information flowed between agents, and automatically identifies **which agent introduced the hallucination** — with an ensemble-verified confidence score and human-readable evidence.
-
-> Think of it like this: Langfuse and Phoenix *show* you logs. TraceLens *tells* you what broke and why.
-
----
-
-## How It Works
-
-```
-Your Chatbot                         TraceLens
-────────────                         ─────────────────────────────────────
-User: "Fix my bug"
-  │
-  ├──> RouterAgent runs         ──> Captured as step_000
-  ├──> CodeReviewAgent runs     ──> Captured as step_001  
-  ├──> SecurityAgent runs       ──> Captured as step_002 ← hallucinates
-  └──> Synthesizer responds     ──> Captured as step_003
-                                        │
-                                        ▼
-                                  Ensemble NLI Judge
-                                  (3 independent votes per claim)
-                                        │
-                                        ▼
-                               Dashboard auto-updates →
-                               SecurityAgent highlighted 🔴
-                               "Known firmware bug" = ungrounded
-                               NLI votes: {ungrounded: 2, grounded: 1}
-```
+<p align="center">
+  <img alt="Python 3.12 or later" src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white">
+  <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-6E56CF">
+  <img alt="Status alpha" src="https://img.shields.io/badge/status-alpha-F59E0B">
+</p>
 
 ---
 
-## Quick Start
+TraceLens captures a multi-agent run, maps the information flow between its steps,
+then uses claim-level verification to rank the step most likely to have introduced
+an unsupported statement. It is designed to make an investigation faster: inspect
+the trace, review the evidence, and see a clear hypothesis for where to start.
+
+> TraceLens is an early-stage diagnostic assistant. Its attribution score is a
+> ranked hypothesis for human review—not a substitute for ground truth or a
+> guarantee of causality.
+
+## What it does
+
+- Captures agent, LLM, tool, router, and synthesizer steps with timing and metadata.
+- Represents sequential, fan-out, and fan-in workflows as a directed trace graph.
+- Breaks outputs into factual claims and checks them against recorded parent evidence.
+- Uses multiple NLI judge votes to make a claim verdict less dependent on one model call.
+- Ranks suspect steps and shows the supporting evidence in a Streamlit dashboard.
+- Supports a Python SDK, HTTP ingestion API, CLI, and initial LangChain, CrewAI, and AutoGen hooks.
+
+## Quick start
+
+**Requirements:** Python 3.12+ and a provider API key for the configured judge model.
 
 ```bash
-# 1. Install
-git clone <repo-url> && cd tracelens
-uv sync && source .venv/bin/activate
+git clone https://github.com/bhavesh-03/Tracelens.git
+cd Tracelens
+uv sync
 
-# 2. Set your API key (used by the NLI judge)
-echo "GOOGLE_API_KEY=your_key" > .env
-
-# 3. Instrument your agent
-python examples/customer_support_study.py
-
-# 4. Launch the dashboard
-tracelens dashboard
-# → Open http://localhost:8501 (auto-refreshes every 5 seconds)
+# The default judge model is Gemini Flash.
+export GOOGLE_API_KEY="your_key_here"
 ```
 
----
-
-## SDK — 30-second Integration
+Create and save a trace:
 
 ```python
 from tracelens.capture import TraceLensCapture
 from tracelens.store import connect, save_trace
 
-# One tracer per user request
-tracer = TraceLensCapture(project_name="my_chatbot")
+query = "Why is the checkout service failing?"
+tracer = TraceLensCapture(project_name="checkout-agent")
 
-# Wrap each agent with a context manager
-with tracer.step("RouterAgent", step_type="router", input_text=user_query) as io:
-    io.output_text = my_router(user_query)
+with tracer.step("Router", step_type="router", input_text=query) as step:
+    step.output_text = "Route to the payments specialist."
 
-with tracer.step("AnswerAgent", step_type="agent", input_text=io.output_text) as io:
-    io.output_text = my_agent(io.output_text)
-    io.model = "gemini-2.5-flash"
+with tracer.step("PaymentsAgent", step_type="agent", input_text="Investigate checkout.") as step:
+    step.output_text = "The payment gateway returned a timeout."
+    step.model = "gemini-2.5-flash"
 
-# Save to DB
-trace = tracer.finalize(query=user_query, final_answer=io.output_text)
+trace = tracer.finalize(
+    query=query,
+    final_answer="Checkout is failing because the payment gateway timed out.",
+)
 save_trace(connect("tracelens.db"), trace)
 ```
 
-**→ See [DOCUMENTATION.md](./DOCUMENTATION.md) for the full SDK guide, all integration patterns, CLI reference, and configuration options.**
+Diagnose it and open the dashboard:
 
----
+```bash
+uv run tracelens diagnose <trace_id>
+uv run tracelens dashboard
+# Dashboard: http://localhost:8501
+```
 
-## Integrations
+## How a diagnosis works
 
-TraceLens provides native integrations for popular multi-agent frameworks:
+```text
+User query
+    │
+    ▼
+Router ──► Specialist agent ──► Tool / research ──► Synthesizer ──► Final answer
+                                                       │
+                                                       ▼
+                                  claim extraction + evidence verification + ranking
+                                                       │
+                                                       ▼
+                                           reviewable root-cause hypothesis
+```
+
+For every step, TraceLens extracts atomic factual claims from its output and
+checks each claim against the immediate parent evidence recorded in the trace.
+The final ranking combines the estimated unsupported-claim rate with a lightweight
+measure of how much the step's content appears in the final answer.
+
+## Use it your way
+
+### Python SDK
+
+The context manager in the quick start is best when you control the agent code.
+There is also a decorator for regular or async functions, plus `add_step()` for
+framework-managed or manually reconstructed traces.
+
+### Framework hooks
 
 ```python
+from tracelens.integrations import TraceLensCallbackHandler, instrument_crew
+
 # LangChain
-from tracelens.integrations import TraceLensCallbackHandler
 handler = TraceLensCallbackHandler(tracer)
 chain.invoke({"input": "..."}, config={"callbacks": [handler]})
 
 # CrewAI
-from tracelens.integrations import instrument_crew
 instrument_crew(my_crew, tracer)
-
-# AutoGen
-from tracelens.integrations import instrument_autogen_agent
-instrument_autogen_agent(my_agent, tracer)
 ```
 
----
+AutoGen instrumentation and synchronous/asynchronous HTTP clients are available
+under `tracelens.integrations` as well.
+
+### HTTP ingestion
+
+Run the local ingest service:
+
+```bash
+uv run tracelens serve --host 127.0.0.1 --port 4318
+```
+
+Send spans to `POST /v1/spans`, then finalize the trace with
+`POST /v1/traces/{trace_id}/finalize`. Interactive endpoint documentation is
+available at `http://127.0.0.1:4318/docs`.
+
+**Security note:** the current HTTP service is intended for trusted local or
+private-network development. Do not expose it publicly: authentication,
+authorization, and trace-data redaction are not yet implemented.
 
 ## Commands
 
-```bash
-# Diagnose a stored trace (runs ensemble NLI + attribution engine)
-tracelens diagnose <trace_id>
-
-# View all stored diagnoses
-tracelens report
-
-# Ingest a trace from a JSON file
-tracelens ingest trace.json
-
-# Launch the live dashboard
-tracelens dashboard
-
-# Run tests
-python -m pytest -v
-```
-
----
-
-## Architecture
-
-```
-src/tracelens/
-├── schema.py       Trace, TraceStep, StepIO, Claim, Diagnosis data models
-├── capture.py      Instrumentation SDK (decorator + context manager + manual API)
-├── dag.py          DAG builder (networkx DiGraph)
-├── claims.py       LLM-based claim decomposition engine
-├── verify.py       Ensemble NLI judge (majority vote, calibrated confidence)
-├── attribute.py    Bayesian causal attribution scoring engine
-├── store.py        SQLite persistence
-├── config.py       tracelens.toml loader
-├── cli.py          Typer CLI (ingest, diagnose, report, dashboard)
-└── dashboard/
-    ├── dashboard.py    Streamlit app with 5-second auto-refresh
-    └── components.py   pyvis graph, Gantt timeline, diagnosis panels
-
-examples/
-├── code_reviewer/          Multi-agent code review system
-├── defect_study.py         Proves TraceLens catches hallucinations mathematically
-└── customer_support_study.py  Batch trace generation with mixed healthy/defective
-```
-
----
-
-## Project Status
-
-| Phase | Description | Status |
-|---|---|---|
-| 0 | Scaffold — pyproject, config, CLI | ✅ Done |
-| 1 | Trace schema & capture SDK | ✅ Done |
-| 2 | Multi-agent code reviewer example | ✅ Done |
-| 3 | SQLite store & DAG builder | ✅ Done |
-| 4 | Claim decomposition engine | ✅ Done |
-| 5 | NLI entailment verification | ✅ Done |
-| 6 | Causal attribution scoring | ✅ Done |
-| 7 | CLI diagnostic commands | ✅ Done |
-| 8 | Defect injection study | ✅ Done |
-| 9 | Streamlit dashboard | ✅ Done |
-| 3B | Ensemble NLI (non-determinism fix) | ✅ Done |
-| 3A | Fixed attribution formula (leaf-bias) | ✅ Done |
-| 4A | pyvis interactive graph | ✅ Done |
-| 4B | Live auto-refresh dashboard | ✅ Done |
-| 10 | HTTP Ingest API + Multi-parent DAG | ✅ Completed |
-| 11 | LangChain / AutoGen / CrewAI integrations | ✅ Completed |
-
----
-
-## Documentation
-
-| Document | Description |
+| Command | Purpose |
 |---|---|
-| [DOCUMENTATION.md](./DOCUMENTATION.md) | Full SDK guide — integration patterns, CLI reference, schema, how the engine works |
-| [tracelens.toml](./tracelens.toml) | Annotated configuration file with all available options |
-| [examples/](./examples/) | Working code examples you can run directly |
+| `uv run tracelens ingest trace.json` | Validate and store a trace JSON file. |
+| `uv run tracelens diagnose <trace_id>` | Run claim verification and attribution. |
+| `uv run tracelens report` | List stored traces and diagnosis summaries. |
+| `uv run tracelens dashboard` | Start the live trace explorer. |
+| `uv run tracelens serve` | Start the HTTP ingest API. |
+| `uv run pytest -q` | Run the test suite. |
+
+## Configuration
+
+`tracelens.toml` controls the judge model, claim limit, attribution threshold,
+database path, ensemble vote count, and judge settings. The defaults use
+`gemini/gemini-2.5-flash` and write to `tracelens.db`.
+
+## Project status
+
+TraceLens is an **alpha** project. The core capture, graph, diagnosis, dashboard,
+HTTP API, and initial integrations are in place. The next important work is
+production safety (authentication, privacy controls, durable ingestion), diagnostic
+evaluation against labelled traces, and CI/deployment support.
+
+See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) for the detailed engineering and product
+review, including priorities and a recommended roadmap.
+
+## Repository layout
+
+```text
+src/tracelens/
+├── capture.py       Python instrumentation SDK
+├── schema.py        Trace and diagnosis data models
+├── dag.py           Information-flow graph builder
+├── claims.py        Claim extraction
+├── verify.py        Ensemble NLI verification
+├── attribute.py     Claim-origin ranking
+├── store.py         SQLite persistence
+├── server.py        HTTP ingest API
+└── dashboard/       Streamlit trace explorer
+
+examples/            Runnable multi-agent examples
+tests/               Unit tests
+```
+
+## Contributing
+
+This project is early and feedback is welcome. Before opening a change, please run:
+
+```bash
+uv run pytest -q
+uv run ruff check src tests
+```
