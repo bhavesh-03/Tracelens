@@ -91,8 +91,8 @@ Router ──► Specialist agent ──► Tool / research ──► Synthesize
 
 For every step, TraceLens extracts atomic factual claims from its output and
 checks each claim against the immediate parent evidence recorded in the trace.
-The final ranking combines the estimated unsupported-claim rate with a lightweight
-measure of how much the step's content appears in the final answer.
+The final ranking combines the estimated unsupported-claim rate, claim-content
+matching, and whether a step can reach a final-answer leaf in the recorded graph.
 
 ## Use it your way
 

@@ -49,9 +49,11 @@ class TraceLensHTTPClient:
         timeout: float = 5.0,
         project_name: str = "default",
         api_key: str | None = None,
+        raise_on_error: bool = True,
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.project_name = project_name
+        self.raise_on_error = raise_on_error
         key = api_key or getenv("TRACELENS_API_KEY")
         headers = {"X-TraceLens-API-Key": key} if key else None
         self._client = httpx.Client(timeout=timeout, headers=headers)
@@ -75,10 +77,11 @@ class TraceLensHTTPClient:
         tags: list[str] | None = None,
         project_name: str | None = None,
     ) -> str:
-        """Send one span to the ingest API. Returns the span_id.
+        """Send one span to the ingest API and return its server-confirmed ID.
 
-        Fire-and-forget: any network error is caught and logged, never raised.
-        This ensures instrumentation never crashes your agent.
+        Delivery failures raise by default so missing spans cannot silently
+        produce an incomplete diagnosis. Set ``raise_on_error=False`` only
+        when best-effort instrumentation is an explicit product decision.
         """
         now_ms = time.time() * 1000
         sid = span_id or f"span_{uuid.uuid4().hex[:8]}"
@@ -106,9 +109,10 @@ class TraceLensHTTPClient:
             resp = self._client.post(f"{self.endpoint}/v1/spans", json=payload)
             resp.raise_for_status()
         except Exception as e:
-            # Never crash the agent — just log and continue
             import logging
             logging.getLogger(__name__).warning(f"TraceLens span push failed: {e}")
+            if self.raise_on_error:
+                raise
 
         return sid
 
@@ -158,9 +162,11 @@ class AsyncTraceLensHTTPClient:
         timeout: float = 5.0,
         project_name: str = "default",
         api_key: str | None = None,
+        raise_on_error: bool = True,
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.project_name = project_name
+        self.raise_on_error = raise_on_error
         key = api_key or getenv("TRACELENS_API_KEY")
         headers = {"X-TraceLens-API-Key": key} if key else None
         self._client = httpx.AsyncClient(timeout=timeout, headers=headers)
@@ -193,6 +199,8 @@ class AsyncTraceLensHTTPClient:
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(f"TraceLens async span push failed: {e}")
+            if self.raise_on_error:
+                raise
         return sid
 
     async def finalize(self, trace_id: str, query: str, final_answer: str, **kwargs: Any) -> dict:

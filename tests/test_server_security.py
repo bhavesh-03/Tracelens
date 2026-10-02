@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from tracelens.config import TraceLensConfig
-from tracelens.store import connect, load_trace
+from tracelens.store import connect, load_buffered_spans, load_trace, save_span
 
 
 def _configure_server(monkeypatch, tmp_path: Path, **overrides):
@@ -28,7 +28,7 @@ def _configure_server(monkeypatch, tmp_path: Path, **overrides):
 
 def test_api_requires_key_and_limits_origins(monkeypatch, tmp_path: Path) -> None:
     server, conn = _configure_server(monkeypatch, tmp_path)
-    client = TestClient(server.app)
+    client = TestClient(server.app, raise_server_exceptions=False)
 
     assert client.get("/v1/health").status_code == 200
     assert client.get("/v1/traces").status_code == 401
@@ -46,7 +46,7 @@ def test_api_requires_key_and_limits_origins(monkeypatch, tmp_path: Path) -> Non
 
 def test_ingest_redacts_content_before_storage(monkeypatch, tmp_path: Path) -> None:
     server, conn = _configure_server(monkeypatch, tmp_path)
-    client = TestClient(server.app)
+    client = TestClient(server.app, raise_server_exceptions=False)
     headers = {"X-TraceLens-API-Key": "test-api-key"}
 
     response = client.post(
@@ -78,4 +78,24 @@ def test_ingest_redacts_content_before_storage(monkeypatch, tmp_path: Path) -> N
     assert "alice@example.com" not in stored["query"]
     assert "hunter2" not in stored["final_answer"]
     assert "hunter2" not in stored["steps"][0]["io"]["output_text"]
+    conn.close()
+
+
+def test_finalize_preserves_buffer_when_trace_save_fails(monkeypatch, tmp_path: Path) -> None:
+    server, conn = _configure_server(monkeypatch, tmp_path)
+    save_span(
+        conn,
+        {"trace_id": "retryable", "span_id": "root", "agent_name": "Router"},
+    )
+    monkeypatch.setattr(server, "save_trace", lambda *args: (_ for _ in ()).throw(RuntimeError()))
+    client = TestClient(server.app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/v1/traces/retryable/finalize",
+        headers={"X-TraceLens-API-Key": "test-api-key"},
+        json={"query": "q", "final_answer": "a", "run_diagnosis": False},
+    )
+
+    assert response.status_code == 500
+    assert [span["span_id"] for span in load_buffered_spans(conn, "retryable")] == ["root"]
     conn.close()

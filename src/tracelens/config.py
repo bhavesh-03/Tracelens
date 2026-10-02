@@ -37,6 +37,7 @@ class TraceLensConfig:
     verification_timeout_s: int = 60
     nli_ensemble_votes: int = 3
     nli_min_agreement: float = 0.67
+    use_semantic_propagation: bool = True
     api_key: str | None = None
     allowed_origins: tuple[str, ...] = ()
     max_request_bytes: int = 1_000_000
@@ -116,6 +117,7 @@ def load_config(path: str | Path | None = None) -> TraceLensConfig:
         verification_timeout_s=tl.get("verification_timeout_s", 60),
         nli_ensemble_votes=tl.get("nli_ensemble_votes", 3),
         nli_min_agreement=tl.get("nli_min_agreement", 0.67),
+        use_semantic_propagation=tl.get("use_semantic_propagation", True),
         api_key=getenv("TRACELENS_API_KEY") or tl.get("api_key"),
         allowed_origins=tuple(tl.get("allowed_origins", [])),
         max_request_bytes=tl.get("max_request_bytes", 1_000_000),

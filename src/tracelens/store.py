@@ -408,13 +408,34 @@ def save_span(conn: sqlite3.Connection, span: dict) -> None:
         )
 
 
-def flush_span_buffer(conn: sqlite3.Connection, trace_id: str) -> list[dict]:
-    """Read and delete all buffered spans for a trace_id. Returns them as dicts."""
+def load_buffered_spans(conn: sqlite3.Connection, trace_id: str) -> list[dict]:
+    """Read buffered spans without deleting them.
+
+    Call :func:`delete_buffered_spans` only after the assembled trace has been
+    committed. Keeping these operations separate prevents a failed finalize
+    from destroying the only buffered copy of a trace.
+    """
     rows = conn.execute(
         "SELECT * FROM span_buffer WHERE trace_id = ? ORDER BY start_time_ms",
         (trace_id,),
     ).fetchall()
-    spans = [dict(r) for r in rows]
+    return [dict(r) for r in rows]
+
+
+def delete_buffered_spans(conn: sqlite3.Connection, span_ids: list[str]) -> int:
+    """Delete exactly the buffered spans that were successfully finalized."""
+    if not span_ids:
+        return 0
     with conn:
-        conn.execute("DELETE FROM span_buffer WHERE trace_id = ?", (trace_id,))
+        placeholders = ", ".join("?" for _ in span_ids)
+        cursor = conn.execute(
+            f"DELETE FROM span_buffer WHERE span_id IN ({placeholders})", span_ids
+        )
+    return cursor.rowcount
+
+
+def flush_span_buffer(conn: sqlite3.Connection, trace_id: str) -> list[dict]:
+    """Legacy read-and-delete helper. Prefer explicit load then delete APIs."""
+    spans = load_buffered_spans(conn, trace_id)
+    delete_buffered_spans(conn, [span["span_id"] for span in spans])
     return spans

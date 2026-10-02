@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from tracelens.config import TraceLensConfig
 from tracelens.schema import Claim, StepIO, TraceStep
-from tracelens.verify import verify_claim
+from tracelens.verify import build_evidence_window, verify_claim
 
 
 def _make_mock_step() -> TraceStep:
@@ -85,3 +85,22 @@ def test_verify_fallback_on_error(mock_completion: MagicMock) -> None:
     assert verified_claim.grounded is None
     assert verified_claim.confidence == 0.0
     assert "Network timeout" in verified_claim.evidence
+
+
+def test_root_evidence_includes_query_and_current_tool_result() -> None:
+    root = TraceStep(
+        step_id="root",
+        agent_name="researcher",
+        step_type="agent",
+        io=StepIO(
+            input_text="Investigate the ticket",
+            output_text="The tool found a timeout.",
+            tool_output="Gateway timeout after 30 seconds",
+        ),
+    )
+
+    evidence = build_evidence_window(root, [root], trace_query="Why did checkout fail?")
+
+    assert "Original user query" in evidence
+    assert "Why did checkout fail?" in evidence
+    assert "Gateway timeout after 30 seconds" in evidence

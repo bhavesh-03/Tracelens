@@ -61,7 +61,11 @@ OUTPUT: {"verdict": "grounded", "evidence": "making it O(N)", "confidence": 0.97
 """
 
 
-def build_evidence_window(step: TraceStep, trace_steps: list[TraceStep]) -> str:
+def build_evidence_window(
+    step: TraceStep,
+    trace_steps: list[TraceStep],
+    trace_query: str | None = None,
+) -> str:
     """Build minimal, focused evidence for a step.
 
     Only includes the step's direct parents' outputs (not the full conversation
@@ -101,8 +105,25 @@ def build_evidence_window(step: TraceStep, trace_steps: list[TraceStep]) -> str:
                 f"[Tool Result used by {parent.agent_name}]:\n{parent.io.tool_output}"
             )
 
+    # An agent may use a tool within its own execution rather than emitting a
+    # separate tool span. That result is direct evidence for the output.
+    if step.io.tool_output:
+        evidence_parts.append(
+            f"[Tool Result used by current step {step.agent_name}]:\n{step.io.tool_output}"
+        )
+
+    if not parent_ids:
+        # Root steps have no upstream agent, but they are still grounded when
+        # faithfully restating the user request or their recorded input.
+        if trace_query:
+            evidence_parts.append(f"[Original user query]:\n{trace_query}")
+        if step.io.input_text and step.io.input_text != trace_query:
+            evidence_parts.append(
+                f"[Input supplied to root step {step.agent_name}]:\n{step.io.input_text}"
+            )
+
     if not evidence_parts:
-        return "No parent context available (this is the root step)."
+        return "No recorded evidence is available for this step."
 
     return "\n\n---\n\n".join(evidence_parts)
 
@@ -113,7 +134,7 @@ def _single_verify(
     config: TraceLensConfig,
     max_retries: int = 5,
 ) -> tuple[str, str, float]:
-    """One NLI judge call with rate-limit-aware retry. Returns (verdict, evidence_quote, confidence)."""
+    """One NLI call with retries. Returns verdict, evidence quote, and confidence."""
     global _last_call_time
     user_prompt = f'CLAIM: "{claim.text}"\n\nEVIDENCE:\n{evidence_text}'
 
@@ -157,10 +178,11 @@ def _single_verify(
             if "429" in error_str or "RateLimitError" in type(e).__name__:
                 # Extract retry delay from error if available
                 retry_match = re.search(r"retry in (\d+(?:\.\d+)?)s", error_str, re.IGNORECASE)
-                if retry_match:
-                    wait_time = float(retry_match.group(1)) + 2  # add buffer
-                else:
-                    wait_time = 15 * (attempt + 1)  # escalating backoff
+                wait_time = (
+                    float(retry_match.group(1)) + 2
+                    if retry_match
+                    else 15 * (attempt + 1)
+                )
                 logger.info(
                     f"Rate limited on claim '{claim.claim_id}' "
                     f"(attempt {attempt+1}/{max_retries}), waiting {wait_time:.0f}s..."
@@ -180,6 +202,7 @@ def verify_claim_ensemble(
     step: TraceStep,
     trace_steps: list[TraceStep],
     config: TraceLensConfig,
+    trace_query: str | None = None,
 ) -> Claim:
     """Verify a claim using an ensemble of N independent NLI judge calls.
 
@@ -197,7 +220,7 @@ def verify_claim_ensemble(
     Mutates and returns the passed Claim object.
     """
     n = config.nli_ensemble_votes
-    evidence_text = build_evidence_window(step, trace_steps)
+    evidence_text = build_evidence_window(step, trace_steps, trace_query)
     votes: list[str] = []
     confidences: list[float] = []
     evidence_quotes: list[str] = []
@@ -232,7 +255,9 @@ def verify_claim_ensemble(
 
     # Use the evidence quote from the majority-verdict runs
     majority_quotes = [
-        ev for v, ev in zip(votes, evidence_quotes) if v == majority_verdict and ev and ev != "None"
+        ev
+        for v, ev in zip(votes, evidence_quotes, strict=True)
+        if v == majority_verdict and ev and ev != "None"
     ]
     best_evidence = majority_quotes[0] if majority_quotes else "None"
 
@@ -268,7 +293,6 @@ def verify_claim(
     """Single-call NLI verify. Prefer verify_claim_ensemble for production use."""
     trace_steps = [parent_step] if parent_step else []
     # Build a fake step that points to the parent
-    from dataclasses import dataclass
     from tracelens.schema import StepIO
 
     class _FakeStep:

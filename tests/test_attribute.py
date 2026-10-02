@@ -4,7 +4,11 @@ from unittest.mock import patch
 
 import pytest
 
-from tracelens.attribute import compute_p_ungrounded, diagnose_trace
+from tracelens.attribute import (
+    _semantic_propagation_score,
+    compute_p_ungrounded,
+    diagnose_trace,
+)
 from tracelens.config import TraceLensConfig
 from tracelens.schema import Claim, StepIO, Trace, TraceStep
 
@@ -22,9 +26,12 @@ def test_compute_p_ungrounded() -> None:
     c3 = Claim(claim_id="3", text="x", source_step_id="s1", verdict="uncertain", confidence=0.5)
     assert compute_p_ungrounded(c3) == pytest.approx(0.5)
 
+@patch("tracelens.attribute._semantic_propagation_score", return_value=1.0)
 @patch("tracelens.attribute.verify_claim_ensemble")
 @patch("tracelens.attribute.decompose_into_claims")
-def test_diagnose_trace_linear_hallucination(mock_decompose, mock_verify) -> None:
+def test_diagnose_trace_linear_hallucination(
+    mock_decompose, mock_verify, mock_semantic
+) -> None:
     """Test a linear A -> B -> C trace where B hallucinates."""
     
     # 3 Steps: Root -> Agent -> Tool
@@ -50,7 +57,7 @@ def test_diagnose_trace_linear_hallucination(mock_decompose, mock_verify) -> Non
     # Mock verify: 
     # Linter (s2) hallucinates (it had no tool output, just guessed)
     # Coordinator (s1) is innocent (it just copied Linter)
-    def fake_verify(claim, step, trace_steps, config):
+    def fake_verify(claim, step, trace_steps, config, **kwargs):
         if claim.source_step_id == "s2":
             claim.verdict = "ungrounded"
             claim.confidence = 0.95
@@ -78,3 +85,22 @@ def test_diagnose_trace_linear_hallucination(mock_decompose, mock_verify) -> Non
     assert s2_attr.attribution_score == 0.95
     assert s2_attr.novel_claim_ratio == 0.95
     assert len(s2_attr.novel_claims) == 1
+
+
+@patch("tracelens.attribute.litellm.completion")
+def test_semantic_propagation_matches_paraphrased_final_claim(mock_completion) -> None:
+    response = mock_completion.return_value
+    response.choices[0].message.content = '{"matching_final_claim_indices": [0]}'
+    score = _semantic_propagation_score(
+        [Claim(claim_id="step", text="The payment provider timed out.", source_step_id="s1")],
+        [
+            Claim(
+                claim_id="final",
+                text="Checkout failed because Stripe did not respond.",
+                source_step_id="final",
+            )
+        ],
+        TraceLensConfig(),
+    )
+
+    assert score == 1.0

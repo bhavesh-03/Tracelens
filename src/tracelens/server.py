@@ -36,8 +36,9 @@ from tracelens.privacy import redact_value
 from tracelens.schema import StepIO, Trace, TraceStep
 from tracelens.store import (
     connect,
-    flush_span_buffer,
+    delete_buffered_spans,
     list_traces,
+    load_buffered_spans,
     load_diagnosis,
     load_trace,
     purge_expired_data,
@@ -267,8 +268,9 @@ async def finalize_trace(
     conn = _get_conn()
     _cleanup_expired_data()
 
-    # Flush buffered spans
-    spans = flush_span_buffer(conn, trace_id)
+    # Read buffered spans without deleting them. They are deleted only after
+    # the complete trace has been persisted successfully.
+    spans = load_buffered_spans(conn, trace_id)
     if not spans:
         raise HTTPException(
             status_code=404,
@@ -317,6 +319,7 @@ async def finalize_trace(
     )
 
     save_trace(conn, trace, _get_cfg())
+    delete_buffered_spans(conn, [span["span_id"] for span in spans])
     logger.info(f"Saved trace {trace_id} with {len(steps)} steps")
 
     # Schedule background diagnosis

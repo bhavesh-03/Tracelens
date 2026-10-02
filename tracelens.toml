@@ -28,6 +28,7 @@ nli_ensemble_votes = 1          # number of independent NLI judge calls per clai
 nli_min_agreement = 0.67        # minimum fraction of judges that must agree
                                 # e.g. 0.67 = need 2/3 votes to match
                                 # if agreement < this, verdict is "uncertain"
+use_semantic_propagation = true # one semantic claim-propagation judgement per step
 
 [costs]
 # Approximate USD per token — used for cost estimates printed at diagnosis end.
