@@ -39,8 +39,8 @@ git clone https://github.com/bhavesh-03/Tracelens.git
 cd Tracelens
 uv sync
 
-# The default judge model is Gemini Flash.
-export GOOGLE_API_KEY="your_key_here"
+# Put OPENAI_API_KEY=... in .env (ignored by Git), or export it here.
+export OPENAI_API_KEY="your_key_here"
 ```
 
 Create and save a trace:
@@ -57,7 +57,7 @@ with tracer.step("Router", step_type="router", input_text=query) as step:
 
 with tracer.step("PaymentsAgent", step_type="agent", input_text="Investigate checkout.") as step:
     step.output_text = "The payment gateway returned a timeout."
-    step.model = "gemini-2.5-flash"
+    step.model = "gpt-4o-mini"
 
 trace = tracer.finalize(
     query=query,
@@ -161,7 +161,8 @@ before persistence by default.
 
 `tracelens.toml` controls the judge model, claim limit, attribution threshold,
 database path, ensemble vote count, and judge settings. The defaults use
-`gemini/gemini-2.5-flash` and write to `tracelens.db`.
+`openai/gpt-4o-mini` and write to `tracelens.db`. Local `.env` files are loaded
+automatically and are ignored by Git.
 
 Set `retention_days` to automatically remove old traces and buffered spans during
 ingestion, or run `uv run tracelens purge --older-than-days 30` for an explicit,
@@ -170,9 +171,9 @@ confirmed cleanup.
 ## Project status
 
 TraceLens is an **alpha** project. The core capture, graph, diagnosis, dashboard,
-HTTP API, and initial integrations are in place. The next important work is
-production safety (authentication, privacy controls, durable ingestion), diagnostic
-evaluation against labelled traces, and CI/deployment support.
+HTTP API, and initial integrations are in place, with local API hardening, redaction,
+retention, and durable trace persistence included. The next important work is calibrated
+evaluation against labelled traces, cost/latency optimization, and CI/deployment support.
 
 See [PROJECT_REVIEW.md](PROJECT_REVIEW.md) for the detailed engineering and product
 review, including priorities and a recommended roadmap.

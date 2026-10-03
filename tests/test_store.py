@@ -80,6 +80,15 @@ class TestSaveAndLoad:
         assert step["io"]["tool_output"] == "search results"
         conn.close()
 
+    def test_repeated_save_is_idempotent(self, tmp_path: Path) -> None:
+        conn = connect(tmp_path / "test.db")
+        trace = _make_trace()
+        first_id = save_trace(conn, trace)
+        second_id = save_trace(conn, trace)
+        assert first_id == second_id
+        assert len(load_trace(conn, "t1")["steps"]) == 2
+        conn.close()
+
     def test_load_missing_raises(self, tmp_path: Path) -> None:
         db_path = tmp_path / "test.db"
         conn = connect(db_path)
@@ -172,6 +181,26 @@ class TestDiagnosisPersistence:
         assert loaded["root_cause_agent"] == "agent_a"
         assert loaded["attribution_score"] == 0.85
         assert loaded["summary"] == "Agent A hallucinated the answer"
+        conn.close()
+
+    def test_list_uses_latest_diagnosis_once(self, tmp_path: Path) -> None:
+        conn = connect(tmp_path / "test.db")
+        save_trace(conn, _make_trace("t1"))
+        for score in (0.2, 0.8):
+            save_diagnosis(
+                conn,
+                Diagnosis(
+                    trace_id="t1",
+                    root_cause_step=StepAttribution(
+                        step_id="s2", agent_name="agent_a", step_type="agent",
+                        attribution_score=score,
+                    ),
+                    diagnosed_at=f"2026-01-0{int(score * 10)}T00:00:00+00:00",
+                ),
+            )
+        traces = list_traces(conn)
+        assert len(traces) == 1
+        assert traces[0]["attribution_score"] == 0.8
         conn.close()
 
     def test_no_diagnosis_returns_none(self, tmp_path: Path) -> None:

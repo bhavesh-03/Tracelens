@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from os import getenv
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 _DEFAULT_CONFIG_NAME = "tracelens.toml"
 
 
@@ -87,6 +89,7 @@ def load_config(path: str | Path | None = None) -> TraceLensConfig:
     2. `tracelens.toml` in the current working directory
     3. All-defaults config (no file needed)
     """
+    load_dotenv()
     if path is None:
         path = Path.cwd() / _DEFAULT_CONFIG_NAME
 

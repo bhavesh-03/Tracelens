@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS steps (
     duration_ms REAL,
     metadata_json TEXT
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_steps_trace_step ON steps(trace_id, step_id);
 
 CREATE TABLE IF NOT EXISTS diagnoses (
     id INTEGER PRIMARY KEY,
@@ -187,8 +188,13 @@ def save_trace(
     now = datetime.now(UTC).isoformat()
 
     with conn:
+        existing = conn.execute(
+            "SELECT id FROM traces WHERE trace_id = ?", (trace.trace_id,)
+        ).fetchone()
+        if existing is not None:
+            return existing["id"]
         cursor = conn.execute(
-            "INSERT OR IGNORE INTO traces "
+            "INSERT INTO traces "
             "(trace_id, project_name, query, final_answer, expected_answer, "
             "created_at, tags_json, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -341,7 +347,10 @@ def list_traces(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
     """List traces most-recent-first with diagnosis summary joined in."""
     rows = conn.execute(
         "SELECT t.*, d.root_cause_step_id, d.root_cause_agent, d.attribution_score "
-        "FROM traces t LEFT JOIN diagnoses d ON t.trace_id = d.trace_id "
+        "FROM traces t LEFT JOIN diagnoses d ON d.id = ("
+        "SELECT id FROM diagnoses WHERE trace_id = t.trace_id "
+        "ORDER BY diagnosed_at DESC, id DESC LIMIT 1"
+        ") "
         "ORDER BY t.created_at DESC LIMIT ?",
         (limit,),
     ).fetchall()

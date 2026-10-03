@@ -2,7 +2,7 @@
 # Copy and edit this file per project; it is loaded from the working directory.
 
 [tracelens]
-judge_model = "gemini/gemini-3.5-flash"     # litellm model string for claim verification
+judge_model = "openai/gpt-4o-mini"          # cost-efficient JSON judge via LiteLLM
 max_claims_per_step = 20                     # cap on claim decomposition per step
 attribution_threshold = 0.15                 # flag step as root cause if score > this
                                              # (lowered from 0.7 — new formula produces smaller scores)
